@@ -145,8 +145,9 @@ Le fichier de réglages est `%APPDATA%\ClaudeTracker\config.json`. Il est créé
 ### À propos du jeton
 
 Le jeton de Claude Code expire au bout de quelques heures et Claude Code le renouvelle à chaque utilisation.
-Par défaut, si le jeton a expiré, l'appli passe en gris et affiche « ouvre Claude Code ».
-Il suffit de lancer `claude` une fois pour que ça reparte.
+Par défaut, si le jeton a expiré, l'appli passe en gris et affiche un bouton **Se reconnecter à Claude**
+(également dans le menu clic droit). Il ouvre un PowerShell qui lance `claude` : Claude Code renouvelle le jeton,
+ou te demande de te reconnecter s'il ne peut pas. Ferme la fenêtre une fois fini : l'appli se rafraîchit aussitôt.
 
 Avec `auto_refresh_token: true`, l'appli renouvelle le jeton elle-même et réécrit le fichier.
 C'est pratique si tu n'utilises pas Claude Code tous les jours. L'inconvénient : une session Claude Code

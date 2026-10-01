@@ -196,7 +196,7 @@ class UsageClient:
             creds = self._refresh_or_raise(creds)
             resp = self._get_usage(creds.access_token)
         if resp.status_code == 401:
-            raise TokenExpired("Connexion expirée : ouvre Claude Code pour la renouveler")
+            raise TokenExpired("Connexion à Claude expirée")
         if resp.status_code == 429:
             raise NetworkError("Trop de requêtes, nouvel essai plus tard")
         if not resp.ok:
@@ -219,7 +219,7 @@ class UsageClient:
 
     def _refresh_or_raise(self, creds: Credentials) -> Credentials:
         if not (self.auto_refresh_token and creds.refresh_token):
-            raise TokenExpired("Connexion expirée : ouvre Claude Code pour la renouveler")
+            raise TokenExpired("Connexion à Claude expirée")
         try:
             resp = self.session.post(
                 TOKEN_URL,
@@ -233,7 +233,7 @@ class UsageClient:
         except requests.RequestException as exc:
             raise NetworkError(f"Hors ligne ({exc.__class__.__name__})") from None
         if not resp.ok:
-            raise TokenExpired("Renouvellement refusé : ouvre Claude Code pour te reconnecter")
+            raise TokenExpired("Connexion à Claude expirée (renouvellement refusé)")
 
         data = resp.json()
         oauth = dict(creds.raw.get("claudeAiOauth") or {})

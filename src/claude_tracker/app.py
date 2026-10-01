@@ -14,11 +14,11 @@ from typing import Callable, Protocol
 import customtkinter as ctk
 import pystray
 
-from . import APP_NAME, __version__, autostart, render, updater
+from . import APP_NAME, __version__, autostart, login, render, updater
 from .config import Config
 from .formatting import tooltip
 from .popup import UsagePopup
-from .usage_client import UsageClient, UsageError, UsageSnapshot
+from .usage_client import CredentialsNotFound, TokenExpired, UsageClient, UsageError, UsageSnapshot
 
 
 def _same_window(a: datetime | None, b: datetime | None) -> bool:
@@ -41,6 +41,8 @@ class TrayApp:
         self.fetcher = fetcher or UsageClient(auto_refresh_token=config.auto_refresh_token)
         self.snapshot: UsageSnapshot | None = None
         self.error: str | None = None
+        self.auth_error = False  # jeton expiré/absent : on propose de se reconnecter
+        self._login_running = False
         self._notified: dict[str, tuple[datetime | None, set[int]]] = {}
         self.update_info: updater.UpdateInfo | None = None
         self._update_notified: str | None = None
@@ -56,7 +58,7 @@ class TrayApp:
         self.root = ctk.CTk()
         self.root.withdraw()
         self.root.title(APP_NAME)
-        self.popup = UsagePopup(self.root, on_refresh=self.request_refresh)
+        self.popup = UsagePopup(self.root, on_refresh=self.request_refresh, on_login=self.open_login)
 
         self.icon = pystray.Icon(
             "claude_usage", icon=render.tray_icon(None), title=tooltip(None), menu=self._build_menu()
@@ -75,6 +77,9 @@ class TrayApp:
         return pystray.Menu(
             pystray.MenuItem("Ouvrir", lambda: self._ui(self.popup.toggle), default=True),
             pystray.MenuItem("Rafraîchir", self.request_refresh),
+            pystray.MenuItem(
+                "Se reconnecter à Claude…", self.open_login, visible=lambda _item: self.auth_error
+            ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("L'icône affiche", pystray.Menu(*(metric_item(k) for k in METRIC_LABELS))),
             pystray.MenuItem(
@@ -129,6 +134,8 @@ class TrayApp:
         while not self._stop.is_set():
             try:
                 snapshot = self.fetcher.fetch()
+            except (TokenExpired, CredentialsNotFound) as exc:
+                self._ui(lambda msg=str(exc): self._on_error(msg, auth=True))
             except UsageError as exc:
                 self._ui(lambda msg=str(exc): self._on_error(msg))
             except Exception as exc:  # ne jamais tuer le thread de polling
@@ -187,14 +194,37 @@ class TrayApp:
 
         threading.Thread(target=work, name="update-install", daemon=True).start()
 
+    # ------------------------------------------------------- connexion
+    def open_login(self) -> None:
+        """Ouvre un PowerShell avec Claude Code, puis rafraîchit quand il est fermé."""
+        if self._login_running:
+            return
+        try:
+            proc = login.open_login_console()
+        except OSError as exc:
+            self.icon.notify(f"Impossible d'ouvrir PowerShell : {exc}", APP_NAME)
+            return
+        if proc is None:
+            return
+        self._login_running = True
+
+        def wait() -> None:
+            proc.wait()
+            self._login_running = False
+            self.request_refresh()
+
+        threading.Thread(target=wait, name="login-wait", daemon=True).start()
+
     # ------------------------------------------------------------- état
     def _on_snapshot(self, snapshot: UsageSnapshot) -> None:
-        self.snapshot, self.error = snapshot, None
+        self.snapshot, self.error, self.auth_error = snapshot, None, False
+        self.icon.update_menu()
         self._apply_state()
         self._maybe_notify(snapshot)
 
-    def _on_error(self, message: str) -> None:
-        self.error = message
+    def _on_error(self, message: str, auth: bool = False) -> None:
+        self.error, self.auth_error = message, auth
+        self.icon.update_menu()
         self._apply_state()
 
     def _icon_value(self) -> float | None:
@@ -214,7 +244,7 @@ class TrayApp:
         offline = self.error is not None
         self.icon.icon = render.tray_icon(self._icon_value(), offline=offline)
         self.icon.title = tooltip(self.snapshot, self.error)
-        self.popup.update_state(self.snapshot, self.error)
+        self.popup.update_state(self.snapshot, self.error, show_login=self.auth_error)
 
     def _maybe_notify(self, snapshot: UsageSnapshot) -> None:
         """Un toast par seuil franchi, une seule fois par fenêtre de reset."""

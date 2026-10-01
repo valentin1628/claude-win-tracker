@@ -88,12 +88,13 @@ class ExtraRow(ctk.CTkFrame):
 
 
 class UsagePopup(ctk.CTkToplevel):
-    def __init__(self, master, on_refresh: Callable[[], None]) -> None:
+    def __init__(self, master, on_refresh: Callable[[], None], on_login: Callable[[], None] | None = None) -> None:
         super().__init__(master, fg_color=render.BG)
         self.withdraw()
         self.overrideredirect(True)
         self.attributes("-topmost", True)
         self._on_refresh = on_refresh
+        self._on_login = on_login
         self._snapshot: UsageSnapshot | None = None
         self._hidden_at = 0.0
         self._tick_job: str | None = None
@@ -137,6 +138,12 @@ class UsagePopup(ctk.CTkToplevel):
             body, text="", text_color=render.ORANGE, font=ctk.CTkFont(size=11), wraplength=300, justify="left"
         )
 
+        self.login_btn = ctk.CTkButton(
+            body, text="Se reconnecter à Claude", height=32, corner_radius=8,
+            fg_color=render.ACCENT, hover_color="#C4654A", text_color=render.BG,
+            font=ctk.CTkFont(size=12, weight="bold"), command=self._login_clicked,
+        )
+
         # Pied de page
         self.footer = ctk.CTkLabel(body, text="", text_color=render.TEXT_MUTED, font=ctk.CTkFont(size=11))
         self.footer.pack(fill="x", pady=(10, 0))
@@ -145,7 +152,7 @@ class UsagePopup(ctk.CTkToplevel):
         self.bind("<Escape>", lambda _e: self.hide())
 
     # ------------------------------------------------------------------ état
-    def update_state(self, snapshot: UsageSnapshot | None, error: str | None) -> None:
+    def update_state(self, snapshot: UsageSnapshot | None, error: str | None, show_login: bool = False) -> None:
         self._snapshot = snapshot
         offline = error is not None
         self.plan_label.configure(text=plan_label(snapshot.plan if snapshot else None))
@@ -170,11 +177,14 @@ class UsagePopup(ctk.CTkToplevel):
         else:
             self.extras_frame.pack_forget()
 
+        # Retirés puis remis dans l'ordre : message, bouton, pied de page.
+        self.message.pack_forget()
+        self.login_btn.pack_forget()
         if error:
             self.message.configure(text=f"⚠ {error}")
             self.message.pack(fill="x", pady=(10, 0), before=self.footer)
-        else:
-            self.message.pack_forget()
+        if show_login and self._on_login:
+            self.login_btn.pack(fill="x", pady=(10, 0), before=self.footer)
         self._update_footer()
 
     def _update_footer(self) -> None:
@@ -187,6 +197,11 @@ class UsagePopup(ctk.CTkToplevel):
             self.session_card.reset_label.configure(text=reset_text(self._snapshot.session) or " ")
             self.weekly_card.reset_label.configure(text=reset_text(self._snapshot.weekly) or " ")
         self._tick_job = self.after(15_000, self._tick)
+
+    def _login_clicked(self) -> None:
+        self.footer.configure(text="Fenêtre de connexion ouverte…")
+        if self._on_login:
+            self._on_login()
 
     def _refresh_clicked(self) -> None:
         self.footer.configure(text="Actualisation…")
