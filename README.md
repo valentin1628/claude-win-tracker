@@ -19,18 +19,70 @@ avec leurs heures de reset. Ce sont les mêmes chiffres que `/usage` dans Claude
 
 ## Prérequis
 
-- Windows 10/11 et Python 3.10+ (pour lancer depuis les sources ou construire l'exe).
-- **Claude Code installé et connecté** avec ton compte Claude (`claude` puis `/login`).
-  L'appli lit le jeton dans `%USERPROFILE%\.claude\.credentials.json`. Elle ne demande aucun mot de passe et n'envoie rien ailleurs qu'à `api.anthropic.com`.
+- Windows 10/11, [Python 3.10+](https://www.python.org/downloads/) et [Git](https://git-scm.com/download/win).
+- **Claude Code installé et connecté** avec ton compte Claude. L'appli Claude Desktop ne suffit pas : son jeton
+  n'est pas lisible par d'autres programmes. L'appli lit le jeton dans `%USERPROFILE%\.claude\.credentials.json`.
+  Elle ne demande aucun mot de passe et n'envoie rien ailleurs qu'à `api.anthropic.com`.
 
-## Lancer depuis les sources
+> Toutes les commandes ci-dessous se tapent dans un PowerShell **normal** (pas en administrateur).
+
+## Installation (une seule fois)
 
 ```powershell
+# 1. Claude Code, uniquement pour la connexion : tape /login dans claude, puis /exit
+irm https://claude.ai/install.ps1 | iex
+claude
+
+# 2. Récupérer le projet dans %USERPROFILE%\Dev
+New-Item -ItemType Directory -Force "$env:USERPROFILE\Dev" | Out-Null
+cd "$env:USERPROFILE\Dev"
+git clone -b claude/claude-subscription-tracker-app-hnva5z https://github.com/valentin1628/claude-win-tracker.git
+cd claude-win-tracker
+
+# 3. Environnement Python + dépendances
 py -3 -m venv .venv
 .\.venv\Scripts\activate
-pip install -e .[dev]
-python -m claude_tracker          # vraie appli
-python -m claude_tracker --demo   # fausses données, pour voir le rendu
+python -m pip install -e .[dev]
+
+# 4. Si tu n'utilises pas Claude Code au quotidien : l'appli renouvelle le jeton elle-même
+New-Item -ItemType Directory -Force "$env:APPDATA\ClaudeTracker" | Out-Null
+'{"auto_refresh_token": true}' | Set-Content "$env:APPDATA\ClaudeTracker\config.json"
+
+# 5. Vérifier que tout remonte
+python -m claude_tracker --check
+```
+
+> Si `activate` affiche une erreur à propos des scripts : `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, puis relance-le.
+
+## Lancer l'appli
+
+```powershell
+cd "$env:USERPROFILE\Dev\claude-win-tracker"
+.\.venv\Scripts\claude-tracker.exe
+```
+
+L'appli démarre **sans console** : tu peux fermer PowerShell, elle reste près de l'horloge (au besoin dans la flèche ^).
+Pour qu'elle se lance toute seule à l'ouverture de session : clic droit sur l'icône, puis **Lancer au démarrage**.
+Un raccourci vers `.venv\Scripts\claude-tracker.exe` sur le bureau marche aussi.
+
+## Mettre à jour
+
+D'abord, clic droit sur l'icône, puis **Quitter**. Ensuite :
+
+```powershell
+cd "$env:USERPROFILE\Dev\claude-win-tracker"
+git pull
+.\.venv\Scripts\activate
+python -m pip install -e .[dev]   # utile seulement si les dépendances ont changé, sans risque sinon
+.\.venv\Scripts\claude-tracker.exe
+```
+
+## Autres commandes
+
+```powershell
+python -m claude_tracker            # lance l'appli en gardant la console (pratique pour voir les erreurs)
+python -m claude_tracker --demo     # fausses données, pour voir le rendu
+python -m claude_tracker --check    # diagnostic de la connexion
 ```
 
 ### Mode démo ou vraies données ?
