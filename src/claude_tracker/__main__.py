@@ -44,6 +44,24 @@ def _single_instance() -> bool:
     return ctypes.windll.kernel32.GetLastError() != ERROR_ALREADY_EXISTS
 
 
+def _run_check(run) -> int:
+    """Diagnostic : dans la console, ou dans une boîte de dialogue pour l'exe sans console."""
+    if sys.stdout is not None:
+        return run()
+    import contextlib
+    import ctypes
+    import io
+
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        code = run()
+    MB_ICONINFORMATION, MB_ICONWARNING = 0x40, 0x30
+    ctypes.windll.user32.MessageBoxW(
+        None, buffer.getvalue(), "Claude Usage Tray - diagnostic", MB_ICONWARNING if code else MB_ICONINFORMATION
+    )
+    return code
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="claude_tracker", description="Suivi de l'abonnement Claude")
     parser.add_argument("--demo", action="store_true", help="utilise de fausses données")
@@ -55,7 +73,7 @@ def main() -> None:
     if args.check:
         from .diagnose import run
 
-        sys.exit(run())
+        sys.exit(_run_check(run))
 
     if not _single_instance():
         print("Claude Usage Tray tourne déjà (regarde près de l'horloge, flèche ^).", file=sys.stderr)

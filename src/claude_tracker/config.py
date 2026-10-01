@@ -23,6 +23,7 @@ class Config:
     icon_metric: str = "five_hour"  # five_hour | seven_day | max
     notify_thresholds: tuple[int, ...] = (80, 95)
     auto_refresh_token: bool = False
+    check_updates: bool = True
 
     def normalized(self) -> "Config":
         self.poll_seconds = max(MIN_POLL_SECONDS, int(self.poll_seconds))

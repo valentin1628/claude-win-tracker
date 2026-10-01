@@ -14,7 +14,7 @@ from typing import Callable, Protocol
 import customtkinter as ctk
 import pystray
 
-from . import APP_NAME, autostart, render
+from . import APP_NAME, __version__, autostart, render, updater
 from .config import Config
 from .formatting import tooltip
 from .popup import UsagePopup
@@ -42,6 +42,11 @@ class TrayApp:
         self.snapshot: UsageSnapshot | None = None
         self.error: str | None = None
         self._notified: dict[str, tuple[datetime | None, set[int]]] = {}
+        self.update_info: updater.UpdateInfo | None = None
+        self._update_notified: str | None = None
+        self._update_wake = threading.Event()
+        self._installing = False
+        self._manual_check = False
 
         self._ui_queue: queue.Queue[Callable[[], None]] = queue.Queue()
         self._stop = threading.Event()
@@ -79,6 +84,16 @@ class TrayApp:
                 visible=autostart.supported(),
             ),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                lambda _item: f"Installer la mise à jour v{self.update_info.version}" if self.update_info else "",
+                self._install_update,
+                visible=lambda _item: self.update_info is not None,
+            ),
+            pystray.MenuItem(
+                "Rechercher les mises à jour",
+                self._check_updates_now,
+                visible=updater.updates_supported(),
+            ),
             pystray.MenuItem("Quitter", self.quit),
         )
 
@@ -104,8 +119,8 @@ class TrayApp:
             except queue.Empty:
                 break
             fn()
-        if not self._stop.is_set():
-            self.root.after(100, self._drain_ui_queue)
+        # Toujours replanifié : root.quit() peut arriver après _stop.set().
+        self.root.after(100, self._drain_ui_queue)
 
     def request_refresh(self) -> None:
         self._wake.set()
@@ -122,6 +137,55 @@ class TrayApp:
                 self._ui(lambda s=snapshot: self._on_snapshot(s))
             self._wake.wait(self.config.poll_seconds)
             self._wake.clear()
+
+    # ------------------------------------------------------ mises à jour
+    UPDATE_FIRST_DELAY = 30
+    UPDATE_INTERVAL = 12 * 3600
+
+    def _update_loop(self) -> None:
+        self._update_wake.wait(self.UPDATE_FIRST_DELAY)
+        while not self._stop.is_set():
+            self._update_wake.clear()
+            manual, self._manual_check = self._manual_check, False
+            info = updater.check_latest()
+            self._ui(lambda i=info, m=manual: self._on_update_checked(i, m))
+            self._update_wake.wait(self.UPDATE_INTERVAL)
+
+    def _check_updates_now(self) -> None:
+        self._manual_check = True
+        self._update_wake.set()
+
+    def _on_update_checked(self, info: updater.UpdateInfo | None, manual: bool = False) -> None:
+        self.update_info = info
+        self.icon.update_menu()
+        if manual and info is None:
+            self.icon.notify(f"Tu as déjà la dernière version ({__version__}).", APP_NAME)
+        if info and self._update_notified != info.version:
+            self._update_notified = info.version
+            self.icon.notify(
+                f"La version {info.version} est disponible. Clic droit sur l'icône pour l'installer.",
+                APP_NAME,
+            )
+
+    def _install_update(self) -> None:
+        info = self.update_info
+        if info is None or self._installing:
+            return
+        self._installing = True
+
+        def work() -> None:
+            try:
+                self.icon.notify(f"Téléchargement de la version {info.version}…", APP_NAME)
+                setup = updater.download(info)
+                updater.launch_installer(setup)
+            except (updater.UpdateError, OSError) as exc:
+                self._installing = False
+                self.icon.notify(f"Mise à jour impossible : {exc}", APP_NAME)
+                return
+            # L'installeur remplace les fichiers puis relance l'appli.
+            self.quit()
+
+        threading.Thread(target=work, name="update-install", daemon=True).start()
 
     # ------------------------------------------------------------- état
     def _on_snapshot(self, snapshot: UsageSnapshot) -> None:
@@ -174,11 +238,14 @@ class TrayApp:
     def run(self) -> None:
         self.icon.run_detached()
         threading.Thread(target=self._poll_loop, name="usage-poll", daemon=True).start()
+        if self.config.check_updates and updater.updates_supported():
+            threading.Thread(target=self._update_loop, name="update-check", daemon=True).start()
         self.root.after(100, self._drain_ui_queue)
         self.root.mainloop()
 
     def quit(self) -> None:
         self._stop.set()
         self._wake.set()
+        self._update_wake.set()
         self.icon.stop()
         self._ui(self.root.quit)

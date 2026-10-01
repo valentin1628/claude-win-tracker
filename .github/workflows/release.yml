@@ -1,0 +1,62 @@
+name: Build & Release
+
+# - Sur une PR : tests + construction de l'installeur (sans publication).
+# - Sur main : si la version de src/claude_tracker/__init__.py n'a pas encore
+#   de release, construit l'installeur et publie la release v<version>.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress -y
+          }
+
+      - name: Build
+        shell: pwsh
+        run: .\build.ps1 -Python python
+
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          $v = (python -c "import claude_tracker; print(claude_tracker.__version__)").Trim()
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ClaudeTracker-${{ steps.version.outputs.version }}-Setup
+          path: dist/ClaudeTracker-${{ steps.version.outputs.version }}-Setup.exe
+          if-no-files-found: error
+
+      - name: Publish release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v${{ steps.version.outputs.version }}"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "La release $tag existe déjà : rien à publier (pense à changer __version__)."
+            exit 0
+          }
+          gh release create $tag "dist/ClaudeTracker-${{ steps.version.outputs.version }}-Setup.exe" `
+            --target $env:GITHUB_SHA --title "Claude Usage Tray $tag" --generate-notes
