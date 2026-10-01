@@ -16,7 +16,7 @@ import pystray
 
 from . import APP_NAME, __version__, autostart, login, render, updater
 from .config import Config
-from .formatting import tooltip
+from .formatting import reset_clock, tooltip
 from .popup import UsagePopup
 from .usage_client import CredentialsNotFound, TokenExpired, UsageClient, UsageError, UsageSnapshot
 
@@ -28,11 +28,21 @@ def _same_window(a: datetime | None, b: datetime | None) -> bool:
     return abs((a - b).total_seconds()) < 600
 
 
+def threshold_message(window, threshold: int) -> str:
+    clock = reset_clock(window)
+    when = f" · reset à {clock}" if clock else ""
+    if threshold >= 100:
+        return f"{window.label} : quota atteint{when}"
+    return f"{window.label} : {round(window.utilization)} % utilisés{when}"
+
+
 class Fetcher(Protocol):
     def fetch(self) -> UsageSnapshot: ...
 
 
 METRIC_LABELS = {"five_hour": "Session 5h", "seven_day": "Semaine", "max": "Le plus élevé"}
+THRESHOLD_CHOICES = (50, 75, 80, 90, 95, 100)
+RECHARGE_MIN_PCT = 50  # « session rechargée » seulement si on l'avait bien entamée
 
 
 class TrayApp:
@@ -43,7 +53,8 @@ class TrayApp:
         self.error: str | None = None
         self.auth_error = False  # jeton expiré/absent : on propose de se reconnecter
         self._login_running = False
-        self._notified: dict[str, tuple[datetime | None, set[int]]] = {}
+        # Par fenêtre : (date de reset, dernier % vu) pour détecter les franchissements de palier.
+        self._last_seen: dict[str, tuple[datetime | None, float]] = {}
         self.update_info: updater.UpdateInfo | None = None
         self._update_notified: str | None = None
         self._update_wake = threading.Event()
@@ -82,6 +93,7 @@ class TrayApp:
             ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("L'icône affiche", pystray.Menu(*(metric_item(k) for k in METRIC_LABELS))),
+            pystray.MenuItem("Notifications", self._notifications_menu()),
             pystray.MenuItem(
                 "Lancer au démarrage",
                 self._toggle_autostart,
@@ -101,6 +113,51 @@ class TrayApp:
             ),
             pystray.MenuItem("Quitter", self.quit),
         )
+
+    def _notifications_menu(self) -> pystray.Menu:
+        cfg = self.config
+        on = lambda _item: cfg.notifications_enabled  # noqa: E731
+
+        def threshold_item(t: int) -> pystray.MenuItem:
+            return pystray.MenuItem(
+                f"À {t} %",
+                lambda: self._toggle_threshold(t),
+                checked=lambda _item: t in cfg.notify_thresholds,
+                enabled=on,
+            )
+
+        def flag_item(label: str, attr: str) -> pystray.MenuItem:
+            return pystray.MenuItem(
+                label, lambda: self._toggle_flag(attr), checked=lambda _item: getattr(cfg, attr), enabled=on
+            )
+
+        return pystray.Menu(
+            pystray.MenuItem(
+                "Activées", lambda: self._toggle_flag("notifications_enabled"),
+                checked=lambda _item: cfg.notifications_enabled,
+            ),
+            pystray.Menu.SEPARATOR,
+            *(threshold_item(t) for t in THRESHOLD_CHOICES),
+            pystray.Menu.SEPARATOR,
+            flag_item("Pour la session 5h", "notify_session"),
+            flag_item("Pour la semaine", "notify_weekly"),
+            flag_item("Quand la session est rechargée", "notify_recharge"),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Tester une notification", self._test_notification),
+        )
+
+    def _toggle_threshold(self, t: int) -> None:
+        current = set(self.config.notify_thresholds)
+        current.symmetric_difference_update({t})
+        self.config.notify_thresholds = tuple(sorted(current))
+        self.config.save()
+
+    def _toggle_flag(self, attr: str) -> None:
+        setattr(self.config, attr, not getattr(self.config, attr))
+        self.config.save()
+
+    def _test_notification(self) -> None:
+        self.icon.notify("Session 5h : 80 % utilisés · reset à 16:30 (exemple)", APP_NAME)
 
     def _set_metric(self, key: str) -> None:
         self.config.icon_metric = key
@@ -247,22 +304,33 @@ class TrayApp:
         self.popup.update_state(self.snapshot, self.error, show_login=self.auth_error)
 
     def _maybe_notify(self, snapshot: UsageSnapshot) -> None:
-        """Un toast par seuil franchi, une seule fois par fenêtre de reset."""
+        """Notifie quand un palier est franchi entre deux relevés (et au rechargement).
+
+        Au premier relevé, les paliers déjà dépassés ne déclenchent rien : pas de
+        rafale au démarrage, ni en réactivant les notifications ou en ajoutant un palier.
+        """
+        cfg = self.config
+        wanted = {"five_hour": cfg.notify_session, "seven_day": cfg.notify_weekly}
         for window in (snapshot.session, snapshot.weekly):
             if window is None:
                 continue
-            reset_key, done = self._notified.get(window.key, (None, set()))
-            if not _same_window(reset_key, window.resets_at):
-                # Nouvelle fenêtre : on ignore les seuils déjà dépassés au démarrage.
-                first_seen = window.key not in self._notified
-                done = {t for t in self.config.notify_thresholds if first_seen and window.utilization >= t}
-            for threshold in self.config.notify_thresholds:
-                if window.utilization >= threshold and threshold not in done:
-                    done.add(threshold)
-                    self.icon.notify(
-                        f"{window.label} : {round(window.utilization)} % utilisés", "Claude Usage"
-                    )
-            self._notified[window.key] = (window.resets_at, done)
+            pct = window.utilization
+            seen = self._last_seen.get(window.key)
+            self._last_seen[window.key] = (window.resets_at, pct)
+            if seen is None:
+                continue
+            prev_reset, prev_pct = seen
+            active = cfg.notifications_enabled and wanted.get(window.key, False)
+
+            if not _same_window(prev_reset, window.resets_at):
+                recharged = window.key == "five_hour" and prev_pct >= RECHARGE_MIN_PCT and pct < prev_pct
+                if recharged and cfg.notifications_enabled and cfg.notify_recharge:
+                    self.icon.notify(f"{window.label} rechargée : tu peux y retourner !", APP_NAME)
+                prev_pct = 0.0
+
+            crossed = [t for t in cfg.notify_thresholds if prev_pct < t <= pct]
+            if active and crossed:
+                self.icon.notify(threshold_message(window, max(crossed)), APP_NAME)
 
     # --------------------------------------------------------- cycle de vie
     def run(self) -> None:

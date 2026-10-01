@@ -13,8 +13,8 @@ avec leurs heures de reset. Ce sont les mêmes chiffres que `/usage` dans Claude
 
 - **Icône** : un anneau qui se remplit (vert < 60 %, orange < 85 %, rouge au-delà), avec le % au centre.
 - **Clic gauche** : mini-fenêtre avec les deux jauges et le compte à rebours avant reset. Une ligne « Opus (semaine) » s'ajoute en bas uniquement sur les offres **Max**, qui ont un quota hebdo séparé pour Opus. Sur **Pro**, elle n'apparaît pas.
-- **Clic droit** : Rafraîchir, choix de la valeur affichée dans l'icône (session, semaine ou la plus élevée), lancement au démarrage de Windows, Quitter.
-- **Notifications** quand la session ou la semaine dépasse 80 % puis 95 %.
+- **Clic droit** : Rafraîchir, choix de la valeur affichée dans l'icône (session, semaine ou la plus élevée), notifications, lancement au démarrage de Windows, Quitter.
+- **Notifications** quand tu franchis un palier : 80 % et 95 % par défaut. Tout se règle dans clic droit → **Notifications** : activer ou couper, choisir les paliers (50, 75, 80, 90, 95, 100 %), session et/ou semaine. En option, une notification « session rechargée » quand ta session 5 h repart à zéro. Une notification n'est envoyée qu'une fois par palier, au moment où il est franchi : rien au démarrage pour un palier déjà dépassé.
 - Survole l'icône pour un résumé dans l'infobulle.
 
 ## Installation
@@ -128,7 +128,11 @@ Le fichier de réglages est `%APPDATA%\ClaudeTracker\config.json`. Il est créé
 {
   "poll_seconds": 120,
   "icon_metric": "five_hour",
+  "notifications_enabled": true,
   "notify_thresholds": [80, 95],
+  "notify_session": true,
+  "notify_weekly": true,
+  "notify_recharge": false,
   "auto_refresh_token": false,
   "check_updates": true
 }
@@ -138,7 +142,10 @@ Le fichier de réglages est `%APPDATA%\ClaudeTracker\config.json`. Il est créé
 |---|---|
 | `poll_seconds` | Intervalle de rafraîchissement (60 s minimum). |
 | `icon_metric` | Valeur affichée dans l'icône : `five_hour`, `seven_day` ou `max` (la plus élevée). |
-| `notify_thresholds` | Seuils (en %) qui déclenchent une notification. |
+| `notifications_enabled` | Active ou coupe toutes les notifications. |
+| `notify_thresholds` | Paliers (en %) qui déclenchent une notification. |
+| `notify_session` / `notify_weekly` | Notifier pour la session 5 h / pour la semaine. |
+| `notify_recharge` | Notifier quand la session 5 h est rechargée (si tu l'avais utilisée à 50 % ou plus). |
 | `auto_refresh_token` | Quand le jeton expire, l'appli le renouvelle elle-même (voir plus bas). |
 | `check_updates` | Vérifie les nouvelles versions sur GitHub (appli installée uniquement). |
 

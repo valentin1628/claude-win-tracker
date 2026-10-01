@@ -21,7 +21,11 @@ def config_dir() -> Path:
 class Config:
     poll_seconds: int = 120
     icon_metric: str = "five_hour"  # five_hour | seven_day | max
+    notifications_enabled: bool = True
     notify_thresholds: tuple[int, ...] = (80, 95)
+    notify_session: bool = True
+    notify_weekly: bool = True
+    notify_recharge: bool = False
     auto_refresh_token: bool = False
     check_updates: bool = True
 
@@ -29,7 +33,7 @@ class Config:
         self.poll_seconds = max(MIN_POLL_SECONDS, int(self.poll_seconds))
         if self.icon_metric not in ICON_METRICS:
             self.icon_metric = "five_hour"
-        self.notify_thresholds = tuple(sorted(int(t) for t in self.notify_thresholds))
+        self.notify_thresholds = tuple(sorted({int(t) for t in self.notify_thresholds if 0 < int(t) <= 100}))
         return self
 
     @classmethod
