@@ -1,189 +1,218 @@
 # Claude Usage Tray
 
-Petite appli Windows, sobre, qui vit dans la zone de notification et affiche l'utilisation
-de ton abonnement Claude (Pro / Max) : la **session 5 h** et le **quota hebdomadaire**,
-avec leurs heures de reset. Ce sont les mêmes chiffres que `/usage` dans Claude Code.
+Une petite icône à côté de l'horloge Windows qui te dit où tu en es de ton abonnement Claude (Pro ou Max).
+
+Claude limite l'utilisation de deux façons : une **session de 5 heures** et un **quota par semaine**. Quand tu arrives au bout, il faut attendre. Cette appli te montre en permanence combien tu as consommé, et dans combien de temps ça se recharge. Plus besoin d'aller vérifier sur le site.
 
 <p align="center">
-  <img src="docs/popup.png" alt="Popup" width="300">
-  &nbsp;
-  <img src="docs/popup-offline.png" alt="Popup hors ligne" width="300">
+  <img src="docs/popup.png" alt="La fenêtre de l'appli" width="300">
 </p>
-<p align="center"><img src="docs/tray-icons.png" alt="Icônes du tray" width="380"></p>
 
-- **Icône** : un anneau qui se remplit (vert < 60 %, orange < 85 %, rouge au-delà), avec le % au centre.
-- **Clic gauche** : mini-fenêtre avec les deux jauges et le compte à rebours avant reset. Une ligne « Opus (semaine) » s'ajoute en bas uniquement sur les offres **Max**, qui ont un quota hebdo séparé pour Opus. Sur **Pro**, elle n'apparaît pas.
-- **Clic droit** : Rafraîchir, choix de la valeur affichée dans l'icône (session, semaine ou la plus élevée), notifications, lancement au démarrage de Windows, Quitter.
-- **Notifications** quand tu franchis un palier : 80 % et 95 % par défaut. Tout se règle dans clic droit → **Notifications** : activer ou couper, choisir les paliers (50, 75, 80, 90, 95, 100 %), session et/ou semaine. En option, une notification « session rechargée » quand ta session 5 h repart à zéro. Une notification n'est envoyée qu'une fois par palier, au moment où il est franchi : rien au démarrage pour un palier déjà dépassé.
-- Survole l'icône pour un résumé dans l'infobulle.
+> Projet personnel, non officiel. Il n'est ni fait ni soutenu par Anthropic (l'entreprise derrière Claude).
+
+---
+
+## Ce qu'il te faut
+
+- Un PC sous **Windows 10 ou 11**.
+- Un abonnement **Claude Pro ou Max**.
+- **Claude Code** installé et connecté à ton compte. On le fait ensemble juste en dessous, c'est gratuit avec ton abonnement.
+
+Pourquoi Claude Code ? L'appli ne te demande jamais ton mot de passe. Elle réutilise la connexion que Claude Code garde sur ton PC. L'appli Claude « classique » (Claude Desktop) ou le site claude.ai ne suffisent pas : leur connexion n'est pas lisible par un autre programme.
+
+---
 
 ## Installation
 
-1. **Connecte Claude Code une fois.** L'appli réutilise sa connexion. L'appli Claude Desktop ne suffit pas :
-   son jeton n'est pas lisible par d'autres programmes. Dans PowerShell :
+### Étape 1 : installer et connecter Claude Code
+
+1. Ouvre le menu Démarrer, tape **PowerShell** et lance-le. Pas besoin du mode administrateur.
+2. Copie cette ligne, colle-la dans la fenêtre (clic droit pour coller), puis appuie sur Entrée :
    ```powershell
    irm https://claude.ai/install.ps1 | iex
-   claude          # tape /login, connecte-toi, puis /exit
    ```
-2. **Télécharge `ClaudeTracker-<version>-Setup.exe`** depuis la page
-   [Releases](https://github.com/valentin1628/claude-win-tracker/releases/latest) et lance-le.
-   Pas besoin d'être administrateur : l'appli s'installe dans `%LOCALAPPDATA%\Programs\ClaudeTracker`.
-   Tu peux cocher « Lancer au démarrage de Windows ».
+3. Quand c'est fini, tape `claude` puis Entrée.
+4. Dans Claude Code, tape `/login` puis Entrée. Ton navigateur s'ouvre : connecte-toi avec ton compte Claude.
+5. Une fois connecté, tape `/exit` pour quitter. Tu peux fermer PowerShell.
 
-> **SmartScreen** affiche « Windows a protégé votre ordinateur » : l'exe n'est pas signé (un certificat
-> coûte cher). Clique sur **Informations complémentaires**, puis **Exécuter quand même**.
+Tu n'auras plus besoin d'y toucher.
 
-Si tu n'utilises pas Claude Code au quotidien, active le renouvellement automatique du jeton (voir
-[À propos du jeton](#à-propos-du-jeton)) :
+### Étape 2 : installer l'appli
+
+1. Va sur la page des [téléchargements](https://github.com/valentin1628/claude-win-tracker/releases/latest).
+2. Dans la partie **Assets**, clique sur le fichier `ClaudeTracker-...-Setup.exe` pour le télécharger.
+3. Lance-le.
+
+Windows va probablement afficher un écran bleu « Windows a protégé votre ordinateur ». C'est normal : l'appli n'est pas « signée », parce qu'un certificat de signature coûte plusieurs centaines d'euros par an. Clique sur **Informations complémentaires**, puis sur **Exécuter quand même**.
+
+4. Suis l'installation. Je te conseille de cocher **Lancer au démarrage de Windows**.
+
+Pas besoin d'être administrateur. Une fois l'installation finie, l'icône apparaît près de l'horloge.
+
+### Étape 3 (conseillée) : si tu n'utilises pas Claude Code tous les jours
+
+La connexion de Claude Code expire au bout de quelques heures. Normalement, c'est Claude Code qui la renouvelle quand tu t'en sers. Si tu ne l'utilises pas, l'appli peut s'en charger elle-même. Pour activer ça, ouvre PowerShell et colle ces deux lignes :
+
 ```powershell
 New-Item -ItemType Directory -Force "$env:APPDATA\ClaudeTracker" | Out-Null
 '{"auto_refresh_token": true}' | Set-Content "$env:APPDATA\ClaudeTracker\config.json"
 ```
 
-L'appli se trouve dans le menu Démarrer : **Claude Usage Tray**, plus **Claude Usage Tray - diagnostic** en cas de souci.
-On la désinstalle depuis Paramètres → Applications.
+Puis redémarre l'appli (clic droit sur l'icône, Quitter, et relance-la depuis le menu Démarrer).
+
+---
+
+## Utilisation
+
+**L'icône** affiche le pourcentage utilisé de ta session de 5 heures. L'anneau change de couleur :
+
+| Couleur | Signification |
+|---|---|
+| Vert | moins de 60 % utilisés, tranquille |
+| Orange | entre 60 et 85 %, ça commence à monter |
+| Rouge | plus de 85 %, bientôt la limite |
+| Gris | pas de données (pas de connexion, ou connexion expirée) |
+
+<p align="center"><img src="docs/tray-icons.png" alt="Les icônes selon le niveau" width="380"></p>
+
+**Passe la souris dessus** pour avoir un résumé rapide.
+
+**Clic gauche** : ouvre la petite fenêtre avec deux jauges, la session 5 h et la semaine, et l'heure à laquelle chacune se recharge. Clique ailleurs pour la fermer.
+
+**Clic droit** : le menu, avec :
+- **Rafraîchir** : met à jour les chiffres tout de suite. Sinon, ils se mettent à jour seuls toutes les 2 minutes.
+- **L'icône affiche** : choisir ce que montre l'icône (la session, la semaine, ou la plus haute des deux).
+- **Notifications** : voir plus bas.
+- **Lancer au démarrage** : pour que l'appli se lance avec Windows.
+- **Quitter**.
+
+Sur les abonnements Max, une ligne « Opus (semaine) » peut apparaître en bas de la fenêtre : c'est un quota séparé pour le modèle Opus. Sur Pro, elle n'apparaît pas.
+
+---
+
+## Notifications
+
+L'appli peut te prévenir quand tu dépasses un certain niveau, par exemple « Session 5h : 82 % utilisés · reset à 16:30 ».
+
+Par défaut, tu es prévenu à **80 %** et à **95 %**. Tout se règle dans **clic droit → Notifications** :
+- **Activées** : couper ou remettre toutes les notifications.
+- **À 50 %, 75 %, 80 %, 90 %, 95 %, 100 %** : coche les paliers qui t'intéressent.
+- **Pour la session 5h / Pour la semaine** : choisir quels quotas surveiller.
+- **Quand la session est rechargée** : être prévenu quand ta session repart à zéro.
+- **Tester une notification** : pour voir à quoi ça ressemble.
+
+Tu n'es prévenu qu'une fois par palier, au moment où tu le dépasses.
+
+---
 
 ## Mises à jour
 
-L'appli vérifie toute seule, au démarrage puis toutes les 12 h, si une nouvelle version est publiée sur GitHub.
-Si c'est le cas, une notification apparaît et le menu (clic droit sur l'icône) propose
-**Installer la mise à jour vX.Y.Z**. Un clic télécharge l'installeur, vérifie son empreinte SHA-256,
-l'installe en silence et relance l'appli. **Rechercher les mises à jour** force la vérification.
+Tu n'as rien à faire. L'appli vérifie toute seule s'il existe une nouvelle version. Si oui, une notification apparaît. Fais **clic droit → Installer la mise à jour** : elle se télécharge, s'installe et l'appli redémarre.
 
-Pour désactiver la vérification : `"check_updates": false` dans `config.json`.
+Tu peux aussi vérifier à la main avec **clic droit → Rechercher les mises à jour**.
 
-## Développement (depuis les sources)
+---
 
-Prérequis : [Python 3.10+](https://www.python.org/downloads/) et [Git](https://git-scm.com/download/win).
-Les commandes se tapent dans un PowerShell **normal** (pas en administrateur).
+## Problèmes fréquents
+
+**Je ne vois pas l'icône.**
+Windows cache souvent les nouvelles icônes. Clique sur la petite flèche **^** à côté de l'horloge : elle y est sûrement. Pour la garder toujours visible : Paramètres → Personnalisation → Barre des tâches → Autres icônes de la barre d'état système, puis active **Claude Usage Tray**.
+
+**L'icône est grise et la fenêtre dit « Connexion à Claude expirée ».**
+Clique sur le bouton **Se reconnecter à Claude** dans la fenêtre. Une fenêtre PowerShell s'ouvre avec Claude Code : s'il te le demande, reconnecte-toi, puis tape `/exit` et ferme la fenêtre. L'appli se met à jour aussitôt. Pour que ça n'arrive plus, fais l'[étape 3](#étape-3-conseillée--si-tu-nutilises-pas-claude-code-tous-les-jours).
+
+**L'icône reste grise et je ne comprends pas pourquoi.**
+Dans le menu Démarrer, lance **Claude Usage Tray - diagnostic**. Une fenêtre vérifie chaque étape et te dit laquelle bloque, et quoi faire. Elle n'affiche aucune information secrète, tu peux en faire une capture pour demander de l'aide.
+
+**Je suis sur un PC de boulot et ça ne marche pas.**
+Certains réseaux d'entreprise filtrent les connexions sécurisées. Le diagnostic te le dira avec une « erreur SSL ». Dans ce cas, il faut voir avec ton service informatique.
+
+**Les chiffres ne sont pas les mêmes que sur claude.ai.**
+L'appli se met à jour toutes les 2 minutes. Fais clic droit → Rafraîchir. Ce sont les mêmes chiffres que la commande `/usage` dans Claude Code.
+
+---
+
+## Désinstaller
+
+Paramètres Windows → Applications → **Claude Usage Tray** → Désinstaller.
+
+---
+
+## Réglages avancés
+
+Tous les réglages sont dans le fichier `%APPDATA%\ClaudeTracker\config.json`. Pour l'ouvrir, colle ce chemin dans la barre d'adresse de l'Explorateur de fichiers. La plupart se changent depuis le menu de l'icône, donc tu n'as normalement pas besoin d'y toucher.
+
+| Réglage | À quoi ça sert | Par défaut |
+|---|---|---|
+| `poll_seconds` | Toutes les combien de secondes les chiffres sont mis à jour (minimum 60) | `120` |
+| `icon_metric` | Ce que montre l'icône : `five_hour` (session), `seven_day` (semaine) ou `max` | `five_hour` |
+| `notifications_enabled` | Notifications activées | `true` |
+| `notify_thresholds` | Paliers des notifications, en % | `[80, 95]` |
+| `notify_session` / `notify_weekly` | Notifier pour la session / pour la semaine | `true` |
+| `notify_recharge` | Notifier quand la session est rechargée | `false` |
+| `auto_refresh_token` | L'appli renouvelle elle-même la connexion (voir l'étape 3) | `false` |
+| `check_updates` | Rechercher les mises à jour | `true` |
+
+Après une modification, redémarre l'appli. Les mises à jour ne touchent pas à ce fichier.
+
+Pour les curieux : avec `auto_refresh_token`, l'appli renouvelle la connexion à la place de Claude Code. Si tu as une session Claude Code ouverte au même moment, elle pourra te demander de te reconnecter. C'est pour ça que ce n'est pas activé par défaut.
+
+---
+
+<details>
+<summary><b>Pour les développeurs</b></summary>
+
+### Comment ça marche
+
+L'appli lit le jeton que Claude Code enregistre dans `%USERPROFILE%\.claude\.credentials.json`. Avec ce jeton, elle appelle `https://api.anthropic.com/api/oauth/usage`, c'est-à-dire le service qu'utilise la commande `/usage` de Claude Code. Il n'est pas documenté officiellement et peut donc changer. Tout ce qui en dépend est regroupé dans `usage_client.py`.
+
+```
+src/claude_tracker/
+├─ usage_client.py   lecture du jeton et appel à l'API
+├─ app.py            icône (pystray), fenêtre (Tk) et rafraîchissement en arrière-plan
+├─ popup.py          la fenêtre (customtkinter)
+├─ render.py         dessin des anneaux (Pillow)
+├─ formatting.py     textes affichés
+├─ config.py         réglages
+├─ updater.py        mises à jour depuis les releases GitHub
+├─ login.py          bouton « Se reconnecter »
+├─ diagnose.py       diagnostic (--check)
+└─ autostart.py      lancement au démarrage
+installer/ClaudeTracker.iss     installeur (Inno Setup)
+.github/workflows/release.yml   build et publication automatiques
+```
+
+### Lancer depuis le code
+
+Il faut [Python 3.10+](https://www.python.org/downloads/) et [Git](https://git-scm.com/download/win).
 
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\Dev" | Out-Null
-cd "$env:USERPROFILE\Dev"
 git clone https://github.com/valentin1628/claude-win-tracker.git
 cd claude-win-tracker
 py -3 -m venv .venv
 .\.venv\Scripts\activate
 python -m pip install -e .[dev]
+
+python -m claude_tracker            # lance l'appli
+python -m claude_tracker --demo     # avec de fausses données (badge DÉMO)
+python -m claude_tracker --check    # diagnostic dans la console
+pytest                              # tests
 ```
 
-> Si `activate` affiche une erreur à propos des scripts : `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, puis relance-le.
+Si `activate` est refusé : `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
-```powershell
-.\.venv\Scripts\claude-tracker.exe   # lance l'appli sans console
-python -m claude_tracker            # avec la console (pratique pour voir les erreurs)
-python -m claude_tracker --demo     # fausses données, pour voir le rendu
-python -m claude_tracker --check    # diagnostic de la connexion
-git pull                            # mettre à jour les sources
-```
-
-En mode sources, la vérification des mises à jour est désactivée : c'est `git pull` qui fait le travail.
-
-### Mode démo ou vraies données ?
-
-`--demo` affiche des **valeurs inventées** qui montent de 3 % à chaque actualisation. Le popup porte alors
-un badge orange **DÉMO** et l'infobulle commence par `[Démo]`. Sans option (ou avec l'appli installée),
-ce sont tes vrais chiffres : l'offre affichée (« Claude · Pro ») vient de ton compte, et les %
-correspondent à `/usage` dans Claude Code.
-
-<p align="center"><img src="docs/popup-demo.png" alt="Popup en mode démo" width="300"></p>
-
-### Construire l'installeur en local
+### Construire l'installeur
 
 ```powershell
 winget install JRSoftware.InnoSetup   # une seule fois
-.\build.ps1
+.\build.ps1                           # -> dist\ClaudeTracker-<version>-Setup.exe
 ```
-
-Le script lance les tests, construit l'appli avec PyInstaller (`dist\ClaudeTracker\`), puis produit
-l'installeur `dist\ClaudeTracker-<version>-Setup.exe` avec Inno Setup.
 
 ### Publier une version
 
-1. Change `__version__` dans `src/claude_tracker/__init__.py` (par exemple `0.2.0` → `0.2.1`).
+1. Change `__version__` dans `src/claude_tracker/__init__.py`.
 2. Fusionne dans `main`.
 
-Le workflow GitHub Actions (`.github/workflows/release.yml`) lance alors les tests, construit l'installeur
-sur un runner Windows et publie la release `v0.2.1`. Les applis installées la détectent ensuite toutes seules.
-Sur une pull request, le workflow construit l'installeur sans le publier : tu peux le télécharger dans les
-artefacts du run pour le tester.
+GitHub Actions lance les tests, construit l'installeur sur Windows et publie la release. Les applis installées la proposent ensuite toutes seules. Sur une pull request, l'installeur est construit sans être publié : il est disponible dans les artefacts du build.
 
-## Ça ne remonte rien ?
-
-Lance le diagnostic : raccourci **Claude Usage Tray - diagnostic** dans le menu Démarrer. En mode sources,
-utilise `python -m claude_tracker --check` (venv activé).
-
-Il vérifie chaque étape : fichier du jeton, expiration, appel à l'API et chiffres reçus. Il indique
-aussi quoi faire si une étape échoue. Le jeton n'est jamais affiché.
-Les causes les plus fréquentes :
-- **Claude Code n'est pas installé ou connecté sur ce PC** : lance `claude` puis `/login`. Utiliser seulement claude.ai dans le navigateur ne suffit pas.
-- **Le jeton a expiré** : lance `claude` une fois pour qu'il le renouvelle.
-- **Proxy ou inspection HTTPS** (réseau d'entreprise) : l'erreur SSL s'affiche dans le diagnostic.
-
-## Réglages
-
-Le fichier de réglages est `%APPDATA%\ClaudeTracker\config.json`. Il est créé dès que tu changes une option dans le menu. Il n'est pas touché par les mises à jour.
-
-```json
-{
-  "poll_seconds": 120,
-  "icon_metric": "five_hour",
-  "notifications_enabled": true,
-  "notify_thresholds": [80, 95],
-  "notify_session": true,
-  "notify_weekly": true,
-  "notify_recharge": false,
-  "auto_refresh_token": false,
-  "check_updates": true
-}
-```
-
-| Clé | Rôle |
-|---|---|
-| `poll_seconds` | Intervalle de rafraîchissement (60 s minimum). |
-| `icon_metric` | Valeur affichée dans l'icône : `five_hour`, `seven_day` ou `max` (la plus élevée). |
-| `notifications_enabled` | Active ou coupe toutes les notifications. |
-| `notify_thresholds` | Paliers (en %) qui déclenchent une notification. |
-| `notify_session` / `notify_weekly` | Notifier pour la session 5 h / pour la semaine. |
-| `notify_recharge` | Notifier quand la session 5 h est rechargée (si tu l'avais utilisée à 50 % ou plus). |
-| `auto_refresh_token` | Quand le jeton expire, l'appli le renouvelle elle-même (voir plus bas). |
-| `check_updates` | Vérifie les nouvelles versions sur GitHub (appli installée uniquement). |
-
-### À propos du jeton
-
-Le jeton de Claude Code expire au bout de quelques heures et Claude Code le renouvelle à chaque utilisation.
-Par défaut, si le jeton a expiré, l'appli passe en gris et affiche un bouton **Se reconnecter à Claude**
-(également dans le menu clic droit). Il ouvre un PowerShell qui lance `claude` : Claude Code renouvelle le jeton,
-ou te demande de te reconnecter s'il ne peut pas. Ferme la fenêtre une fois fini : l'appli se rafraîchit aussitôt.
-
-Avec `auto_refresh_token: true`, l'appli renouvelle le jeton elle-même et réécrit le fichier.
-C'est pratique si tu n'utilises pas Claude Code tous les jours. L'inconvénient : une session Claude Code
-déjà ouverte au même moment peut devoir se reconnecter.
-
-## Fonctionnement
-
-```
-src/claude_tracker/
-├─ usage_client.py  # lecture du jeton + appel GET /api/oauth/usage, parsing tolérant
-├─ render.py        # anneaux dessinés avec Pillow (supersampling x4 → anti-aliasing)
-├─ popup.py         # fenêtre customtkinter sans bordure, au-dessus de la barre des tâches
-├─ app.py           # Tk (thread principal) + pystray + thread de polling, reliés par une file
-├─ formatting.py    # textes FR : « reset dans 2 h 14 », infobulle…
-├─ config.py        # réglages JSON
-├─ updater.py       # vérifie la dernière release GitHub, télécharge et lance l'installeur
-├─ diagnose.py      # --check
-└─ autostart.py     # clé de registre HKCU\…\Run
-installer/ClaudeTracker.iss   # installeur Inno Setup (sans droits admin)
-.github/workflows/release.yml # CI : tests, build Windows, publication des releases
-```
-
-L'endpoint `api.anthropic.com/api/oauth/usage` est celui qu'utilise Claude Code. Il n'est **pas documenté
-officiellement** et peut donc changer. Tout ce qui dépend de son format est regroupé dans `usage_client.py`.
-
-Pour regénérer les aperçus des icônes : `python -m claude_tracker.render --preview preview`.
-
-## Tests
-
-```powershell
-pytest
-```
+</details>
