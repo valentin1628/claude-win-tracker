@@ -1,0 +1,252 @@
+"""Récupération de l'utilisation de l'abonnement Claude.
+
+On réutilise le jeton OAuth que Claude Code stocke localement, puis on appelle
+l'endpoint utilisé par la commande ``/usage``. Cet endpoint n'est pas documenté
+officiellement : tout ce qui dépend de son format est isolé dans ce module.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import requests
+
+from . import __version__
+
+USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+TOKEN_URL = "https://console.anthropic.com/v1/oauth/token"
+OAUTH_BETA = "oauth-2025-04-20"
+# client_id public de Claude Code (nécessaire uniquement pour le refresh).
+CLAUDE_CODE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+
+# Clés de la réponse API -> libellé affiché.
+WINDOW_LABELS = {
+    "five_hour": "Session 5h",
+    "seven_day": "Semaine",
+    "seven_day_opus": "Opus (semaine)",
+    "seven_day_sonnet": "Sonnet (semaine)",
+}
+
+
+# --------------------------------------------------------------------------- #
+# Erreurs
+# --------------------------------------------------------------------------- #
+class UsageError(Exception):
+    """Erreur générique, le message est affichable tel quel."""
+
+
+class CredentialsNotFound(UsageError):
+    pass
+
+
+class TokenExpired(UsageError):
+    pass
+
+
+class NetworkError(UsageError):
+    pass
+
+
+# --------------------------------------------------------------------------- #
+# Modèle de données
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class UsageWindow:
+    key: str
+    label: str
+    utilization: float  # pourcentage 0-100 (peut dépasser 100)
+    resets_at: datetime | None
+
+
+@dataclass(frozen=True)
+class UsageSnapshot:
+    windows: dict[str, UsageWindow]
+    plan: str | None = None
+    fetched_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def session(self) -> UsageWindow | None:
+        return self.windows.get("five_hour")
+
+    @property
+    def weekly(self) -> UsageWindow | None:
+        return self.windows.get("seven_day")
+
+    @property
+    def extras(self) -> list[UsageWindow]:
+        return [w for k, w in self.windows.items() if k not in ("five_hour", "seven_day")]
+
+
+@dataclass
+class Credentials:
+    access_token: str
+    refresh_token: str | None
+    expires_at: datetime | None
+    plan: str | None
+    raw: dict[str, Any]
+
+    @property
+    def expired(self) -> bool:
+        return self.expires_at is not None and self.expires_at <= datetime.now(timezone.utc)
+
+
+# --------------------------------------------------------------------------- #
+# Parsing
+# --------------------------------------------------------------------------- #
+def _parse_dt(value: Any) -> datetime | None:
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def parse_usage(payload: dict[str, Any], plan: str | None = None) -> UsageSnapshot:
+    """Convertit la réponse JSON en ``UsageSnapshot`` en ignorant ce qui est absent."""
+    windows: dict[str, UsageWindow] = {}
+    for key, label in WINDOW_LABELS.items():
+        data = payload.get(key)
+        if not isinstance(data, dict):
+            continue
+        util = data.get("utilization")
+        if not isinstance(util, (int, float)):
+            continue
+        windows[key] = UsageWindow(key, label, float(util), _parse_dt(data.get("resets_at")))
+    if not windows:
+        raise UsageError("Réponse inattendue de l'API (aucune donnée d'utilisation)")
+    return UsageSnapshot(windows=windows, plan=plan)
+
+
+def default_credentials_path() -> Path:
+    config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+    base = Path(config_dir) if config_dir else Path.home() / ".claude"
+    return base / ".credentials.json"
+
+
+def load_credentials(path: Path | None = None) -> Credentials:
+    path = path or default_credentials_path()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise CredentialsNotFound(
+            "Claude Code n'est pas connecté sur ce PC (fichier .credentials.json introuvable)"
+        ) from None
+    except (OSError, json.JSONDecodeError) as exc:
+        raise UsageError(f"Impossible de lire {path.name} : {exc}") from None
+
+    oauth = raw.get("claudeAiOauth") or {}
+    token = oauth.get("accessToken")
+    if not token:
+        raise CredentialsNotFound("Aucun jeton OAuth Claude dans .credentials.json")
+
+    expires_ms = oauth.get("expiresAt")
+    expires_at = (
+        datetime.fromtimestamp(expires_ms / 1000, tz=timezone.utc)
+        if isinstance(expires_ms, (int, float))
+        else None
+    )
+    return Credentials(
+        access_token=token,
+        refresh_token=oauth.get("refreshToken"),
+        expires_at=expires_at,
+        plan=oauth.get("subscriptionType"),
+        raw=raw,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Client
+# --------------------------------------------------------------------------- #
+class UsageClient:
+    def __init__(
+        self,
+        credentials_path: Path | None = None,
+        auto_refresh_token: bool = False,
+        timeout: float = 15.0,
+    ) -> None:
+        self.credentials_path = credentials_path or default_credentials_path()
+        self.auto_refresh_token = auto_refresh_token
+        self.timeout = timeout
+        self.session = requests.Session()
+        self.session.headers["User-Agent"] = f"claude-win-tracker/{__version__}"
+
+    def fetch(self) -> UsageSnapshot:
+        # Le fichier est relu à chaque fois : Claude Code a pu renouveler le jeton.
+        creds = load_credentials(self.credentials_path)
+        if creds.expired:
+            creds = self._refresh_or_raise(creds)
+
+        resp = self._get_usage(creds.access_token)
+        if resp.status_code == 401 and self.auto_refresh_token and creds.refresh_token:
+            creds = self._refresh_or_raise(creds)
+            resp = self._get_usage(creds.access_token)
+        if resp.status_code == 401:
+            raise TokenExpired("Connexion expirée : ouvre Claude Code pour la renouveler")
+        if resp.status_code == 429:
+            raise NetworkError("Trop de requêtes, nouvel essai plus tard")
+        if not resp.ok:
+            raise NetworkError(f"Erreur API ({resp.status_code})")
+        try:
+            payload = resp.json()
+        except ValueError:
+            raise UsageError("Réponse API illisible") from None
+        return parse_usage(payload, plan=creds.plan)
+
+    def _get_usage(self, token: str) -> requests.Response:
+        try:
+            return self.session.get(
+                USAGE_URL,
+                headers={"Authorization": f"Bearer {token}", "anthropic-beta": OAUTH_BETA},
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise NetworkError(f"Hors ligne ({exc.__class__.__name__})") from None
+
+    def _refresh_or_raise(self, creds: Credentials) -> Credentials:
+        if not (self.auto_refresh_token and creds.refresh_token):
+            raise TokenExpired("Connexion expirée : ouvre Claude Code pour la renouveler")
+        try:
+            resp = self.session.post(
+                TOKEN_URL,
+                json={
+                    "grant_type": "refresh_token",
+                    "refresh_token": creds.refresh_token,
+                    "client_id": CLAUDE_CODE_CLIENT_ID,
+                },
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise NetworkError(f"Hors ligne ({exc.__class__.__name__})") from None
+        if not resp.ok:
+            raise TokenExpired("Renouvellement refusé : ouvre Claude Code pour te reconnecter")
+
+        data = resp.json()
+        oauth = dict(creds.raw.get("claudeAiOauth") or {})
+        oauth["accessToken"] = data["access_token"]
+        if data.get("refresh_token"):
+            oauth["refreshToken"] = data["refresh_token"]
+        if data.get("expires_in"):
+            oauth["expiresAt"] = int((time.time() + data["expires_in"]) * 1000)
+        raw = dict(creds.raw, claudeAiOauth=oauth)
+        _atomic_write_json(self.credentials_path, raw)
+        return load_credentials(self.credentials_path)
+
+
+def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".credentials.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
