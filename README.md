@@ -36,7 +36,7 @@ claude
 # 2. Récupérer le projet dans %USERPROFILE%\Dev
 New-Item -ItemType Directory -Force "$env:USERPROFILE\Dev" | Out-Null
 cd "$env:USERPROFILE\Dev"
-git clone -b claude/claude-subscription-tracker-app-hnva5z https://github.com/valentin1628/claude-win-tracker.git
+git clone https://github.com/valentin1628/claude-win-tracker.git
 cd claude-win-tracker
 
 # 3. Environnement Python + dépendances
@@ -76,6 +76,9 @@ git pull
 python -m pip install -e .[dev]   # utile seulement si les dépendances ont changé, sans risque sinon
 .\.venv\Scripts\claude-tracker.exe
 ```
+
+> Tu avais cloné l'ancienne branche `claude/claude-subscription-tracker-app-hnva5z` ? Passe une fois sur `main` :
+> `git fetch` puis `git checkout main`. Ensuite, `git pull` suffit.
 
 ## Autres commandes
 
