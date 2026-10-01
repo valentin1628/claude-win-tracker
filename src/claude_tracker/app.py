@@ -14,11 +14,11 @@ from typing import Callable, Protocol
 import customtkinter as ctk
 import pystray
 
-from . import APP_NAME, autostart, render
+from . import APP_NAME, __version__, autostart, login, render, updater
 from .config import Config
 from .formatting import tooltip
 from .popup import UsagePopup
-from .usage_client import UsageClient, UsageError, UsageSnapshot
+from .usage_client import CredentialsNotFound, TokenExpired, UsageClient, UsageError, UsageSnapshot
 
 
 def _same_window(a: datetime | None, b: datetime | None) -> bool:
@@ -41,7 +41,14 @@ class TrayApp:
         self.fetcher = fetcher or UsageClient(auto_refresh_token=config.auto_refresh_token)
         self.snapshot: UsageSnapshot | None = None
         self.error: str | None = None
+        self.auth_error = False  # jeton expiré/absent : on propose de se reconnecter
+        self._login_running = False
         self._notified: dict[str, tuple[datetime | None, set[int]]] = {}
+        self.update_info: updater.UpdateInfo | None = None
+        self._update_notified: str | None = None
+        self._update_wake = threading.Event()
+        self._installing = False
+        self._manual_check = False
 
         self._ui_queue: queue.Queue[Callable[[], None]] = queue.Queue()
         self._stop = threading.Event()
@@ -51,7 +58,7 @@ class TrayApp:
         self.root = ctk.CTk()
         self.root.withdraw()
         self.root.title(APP_NAME)
-        self.popup = UsagePopup(self.root, on_refresh=self.request_refresh)
+        self.popup = UsagePopup(self.root, on_refresh=self.request_refresh, on_login=self.open_login)
 
         self.icon = pystray.Icon(
             "claude_usage", icon=render.tray_icon(None), title=tooltip(None), menu=self._build_menu()
@@ -70,6 +77,9 @@ class TrayApp:
         return pystray.Menu(
             pystray.MenuItem("Ouvrir", lambda: self._ui(self.popup.toggle), default=True),
             pystray.MenuItem("Rafraîchir", self.request_refresh),
+            pystray.MenuItem(
+                "Se reconnecter à Claude…", self.open_login, visible=lambda _item: self.auth_error
+            ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("L'icône affiche", pystray.Menu(*(metric_item(k) for k in METRIC_LABELS))),
             pystray.MenuItem(
@@ -79,6 +89,16 @@ class TrayApp:
                 visible=autostart.supported(),
             ),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                lambda _item: f"Installer la mise à jour v{self.update_info.version}" if self.update_info else "",
+                self._install_update,
+                visible=lambda _item: self.update_info is not None,
+            ),
+            pystray.MenuItem(
+                "Rechercher les mises à jour",
+                self._check_updates_now,
+                visible=updater.updates_supported(),
+            ),
             pystray.MenuItem("Quitter", self.quit),
         )
 
@@ -104,8 +124,8 @@ class TrayApp:
             except queue.Empty:
                 break
             fn()
-        if not self._stop.is_set():
-            self.root.after(100, self._drain_ui_queue)
+        # Toujours replanifié : root.quit() peut arriver après _stop.set().
+        self.root.after(100, self._drain_ui_queue)
 
     def request_refresh(self) -> None:
         self._wake.set()
@@ -114,6 +134,8 @@ class TrayApp:
         while not self._stop.is_set():
             try:
                 snapshot = self.fetcher.fetch()
+            except (TokenExpired, CredentialsNotFound) as exc:
+                self._ui(lambda msg=str(exc): self._on_error(msg, auth=True))
             except UsageError as exc:
                 self._ui(lambda msg=str(exc): self._on_error(msg))
             except Exception as exc:  # ne jamais tuer le thread de polling
@@ -123,14 +145,86 @@ class TrayApp:
             self._wake.wait(self.config.poll_seconds)
             self._wake.clear()
 
+    # ------------------------------------------------------ mises à jour
+    UPDATE_FIRST_DELAY = 30
+    UPDATE_INTERVAL = 12 * 3600
+
+    def _update_loop(self) -> None:
+        self._update_wake.wait(self.UPDATE_FIRST_DELAY)
+        while not self._stop.is_set():
+            self._update_wake.clear()
+            manual, self._manual_check = self._manual_check, False
+            info = updater.check_latest()
+            self._ui(lambda i=info, m=manual: self._on_update_checked(i, m))
+            self._update_wake.wait(self.UPDATE_INTERVAL)
+
+    def _check_updates_now(self) -> None:
+        self._manual_check = True
+        self._update_wake.set()
+
+    def _on_update_checked(self, info: updater.UpdateInfo | None, manual: bool = False) -> None:
+        self.update_info = info
+        self.icon.update_menu()
+        if manual and info is None:
+            self.icon.notify(f"Tu as déjà la dernière version ({__version__}).", APP_NAME)
+        if info and self._update_notified != info.version:
+            self._update_notified = info.version
+            self.icon.notify(
+                f"La version {info.version} est disponible. Clic droit sur l'icône pour l'installer.",
+                APP_NAME,
+            )
+
+    def _install_update(self) -> None:
+        info = self.update_info
+        if info is None or self._installing:
+            return
+        self._installing = True
+
+        def work() -> None:
+            try:
+                self.icon.notify(f"Téléchargement de la version {info.version}…", APP_NAME)
+                setup = updater.download(info)
+                updater.launch_installer(setup)
+            except (updater.UpdateError, OSError) as exc:
+                self._installing = False
+                self.icon.notify(f"Mise à jour impossible : {exc}", APP_NAME)
+                return
+            # L'installeur remplace les fichiers puis relance l'appli.
+            self.quit()
+
+        threading.Thread(target=work, name="update-install", daemon=True).start()
+
+    # ------------------------------------------------------- connexion
+    def open_login(self) -> None:
+        """Ouvre un PowerShell avec Claude Code, puis rafraîchit quand il est fermé."""
+        if self._login_running:
+            return
+        try:
+            proc = login.open_login_console()
+        except OSError as exc:
+            self.icon.notify(f"Impossible d'ouvrir PowerShell : {exc}", APP_NAME)
+            return
+        if proc is None:
+            return
+        self._login_running = True
+
+        def wait() -> None:
+            proc.wait()
+            self._login_running = False
+            self.request_refresh()
+
+        threading.Thread(target=wait, name="login-wait", daemon=True).start()
+
     # ------------------------------------------------------------- état
     def _on_snapshot(self, snapshot: UsageSnapshot) -> None:
-        self.snapshot, self.error = snapshot, None
+        self.snapshot, self.error, self.auth_error = snapshot, None, False
+        self.icon.update_menu()
         self._apply_state()
         self._maybe_notify(snapshot)
 
-    def _on_error(self, message: str) -> None:
-        self.error = message
+    def _on_error(self, message: str, auth: bool = False) -> None:
+        self.error, self.auth_error = message, auth
+        self.icon.update_menu()
         self._apply_state()
 
     def _icon_value(self) -> float | None:
@@ -150,7 +244,7 @@ class TrayApp:
         offline = self.error is not None
         self.icon.icon = render.tray_icon(self._icon_value(), offline=offline)
         self.icon.title = tooltip(self.snapshot, self.error)
-        self.popup.update_state(self.snapshot, self.error)
+        self.popup.update_state(self.snapshot, self.error, show_login=self.auth_error)
 
     def _maybe_notify(self, snapshot: UsageSnapshot) -> None:
         """Un toast par seuil franchi, une seule fois par fenêtre de reset."""
@@ -174,11 +268,14 @@ class TrayApp:
     def run(self) -> None:
         self.icon.run_detached()
         threading.Thread(target=self._poll_loop, name="usage-poll", daemon=True).start()
+        if self.config.check_updates and updater.updates_supported():
+            threading.Thread(target=self._update_loop, name="update-check", daemon=True).start()
         self.root.after(100, self._drain_ui_queue)
         self.root.mainloop()
 
     def quit(self) -> None:
         self._stop.set()
         self._wake.set()
+        self._update_wake.set()
         self.icon.stop()
         self._ui(self.root.quit)

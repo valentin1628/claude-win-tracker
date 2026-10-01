@@ -1,4 +1,4 @@
 """Claude Usage Tray : suivi de l'abonnement Claude dans la barre des tâches."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 APP_NAME = "Claude Usage Tray"

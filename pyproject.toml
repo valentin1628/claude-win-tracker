@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-win-tracker"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Suivi de l'utilisation de l'abonnement Claude dans la barre des tâches Windows"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,6 +20,9 @@ dev = ["pytest>=8", "pyinstaller>=6"]
 
 [project.gui-scripts]
 claude-tracker = "claude_tracker.__main__:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "claude_tracker.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]

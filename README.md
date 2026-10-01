@@ -17,105 +17,101 @@ avec leurs heures de reset. Ce sont les mêmes chiffres que `/usage` dans Claude
 - **Notifications** quand la session ou la semaine dépasse 80 % puis 95 %.
 - Survole l'icône pour un résumé dans l'infobulle.
 
-## Prérequis
+## Installation
 
-- Windows 10/11, [Python 3.10+](https://www.python.org/downloads/) et [Git](https://git-scm.com/download/win).
-- **Claude Code installé et connecté** avec ton compte Claude. L'appli Claude Desktop ne suffit pas : son jeton
-  n'est pas lisible par d'autres programmes. L'appli lit le jeton dans `%USERPROFILE%\.claude\.credentials.json`.
-  Elle ne demande aucun mot de passe et n'envoie rien ailleurs qu'à `api.anthropic.com`.
+1. **Connecte Claude Code une fois.** L'appli réutilise sa connexion. L'appli Claude Desktop ne suffit pas :
+   son jeton n'est pas lisible par d'autres programmes. Dans PowerShell :
+   ```powershell
+   irm https://claude.ai/install.ps1 | iex
+   claude          # tape /login, connecte-toi, puis /exit
+   ```
+2. **Télécharge `ClaudeTracker-<version>-Setup.exe`** depuis la page
+   [Releases](https://github.com/valentin1628/claude-win-tracker/releases/latest) et lance-le.
+   Pas besoin d'être administrateur : l'appli s'installe dans `%LOCALAPPDATA%\Programs\ClaudeTracker`.
+   Tu peux cocher « Lancer au démarrage de Windows ».
 
-> Toutes les commandes ci-dessous se tapent dans un PowerShell **normal** (pas en administrateur).
+> **SmartScreen** affiche « Windows a protégé votre ordinateur » : l'exe n'est pas signé (un certificat
+> coûte cher). Clique sur **Informations complémentaires**, puis **Exécuter quand même**.
 
-## Installation (une seule fois)
+Si tu n'utilises pas Claude Code au quotidien, active le renouvellement automatique du jeton (voir
+[À propos du jeton](#à-propos-du-jeton)) :
+```powershell
+New-Item -ItemType Directory -Force "$env:APPDATA\ClaudeTracker" | Out-Null
+'{"auto_refresh_token": true}' | Set-Content "$env:APPDATA\ClaudeTracker\config.json"
+```
+
+L'appli se trouve dans le menu Démarrer : **Claude Usage Tray**, plus **Claude Usage Tray - diagnostic** en cas de souci.
+On la désinstalle depuis Paramètres → Applications.
+
+## Mises à jour
+
+L'appli vérifie toute seule, au démarrage puis toutes les 12 h, si une nouvelle version est publiée sur GitHub.
+Si c'est le cas, une notification apparaît et le menu (clic droit sur l'icône) propose
+**Installer la mise à jour vX.Y.Z**. Un clic télécharge l'installeur, vérifie son empreinte SHA-256,
+l'installe en silence et relance l'appli. **Rechercher les mises à jour** force la vérification.
+
+Pour désactiver la vérification : `"check_updates": false` dans `config.json`.
+
+## Développement (depuis les sources)
+
+Prérequis : [Python 3.10+](https://www.python.org/downloads/) et [Git](https://git-scm.com/download/win).
+Les commandes se tapent dans un PowerShell **normal** (pas en administrateur).
 
 ```powershell
-# 1. Claude Code, uniquement pour la connexion : tape /login dans claude, puis /exit
-irm https://claude.ai/install.ps1 | iex
-claude
-
-# 2. Récupérer le projet dans %USERPROFILE%\Dev
 New-Item -ItemType Directory -Force "$env:USERPROFILE\Dev" | Out-Null
 cd "$env:USERPROFILE\Dev"
 git clone https://github.com/valentin1628/claude-win-tracker.git
 cd claude-win-tracker
-
-# 3. Environnement Python + dépendances
 py -3 -m venv .venv
 .\.venv\Scripts\activate
 python -m pip install -e .[dev]
-
-# 4. Si tu n'utilises pas Claude Code au quotidien : l'appli renouvelle le jeton elle-même
-New-Item -ItemType Directory -Force "$env:APPDATA\ClaudeTracker" | Out-Null
-'{"auto_refresh_token": true}' | Set-Content "$env:APPDATA\ClaudeTracker\config.json"
-
-# 5. Vérifier que tout remonte
-python -m claude_tracker --check
 ```
 
 > Si `activate` affiche une erreur à propos des scripts : `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, puis relance-le.
 
-## Lancer l'appli
-
 ```powershell
-cd "$env:USERPROFILE\Dev\claude-win-tracker"
-.\.venv\Scripts\claude-tracker.exe
-```
-
-L'appli démarre **sans console** : tu peux fermer PowerShell, elle reste près de l'horloge (au besoin dans la flèche ^).
-Pour qu'elle se lance toute seule à l'ouverture de session : clic droit sur l'icône, puis **Lancer au démarrage**.
-Un raccourci vers `.venv\Scripts\claude-tracker.exe` sur le bureau marche aussi.
-
-## Mettre à jour
-
-D'abord, clic droit sur l'icône, puis **Quitter**. Ensuite :
-
-```powershell
-cd "$env:USERPROFILE\Dev\claude-win-tracker"
-git pull
-.\.venv\Scripts\activate
-python -m pip install -e .[dev]   # utile seulement si les dépendances ont changé, sans risque sinon
-.\.venv\Scripts\claude-tracker.exe
-```
-
-> Tu avais cloné l'ancienne branche `claude/claude-subscription-tracker-app-hnva5z` ? Passe une fois sur `main` :
-> `git fetch` puis `git checkout main`. Ensuite, `git pull` suffit.
-
-## Autres commandes
-
-```powershell
-python -m claude_tracker            # lance l'appli en gardant la console (pratique pour voir les erreurs)
+.\.venv\Scripts\claude-tracker.exe   # lance l'appli sans console
+python -m claude_tracker            # avec la console (pratique pour voir les erreurs)
 python -m claude_tracker --demo     # fausses données, pour voir le rendu
 python -m claude_tracker --check    # diagnostic de la connexion
+git pull                            # mettre à jour les sources
 ```
+
+En mode sources, la vérification des mises à jour est désactivée : c'est `git pull` qui fait le travail.
 
 ### Mode démo ou vraies données ?
 
 `--demo` affiche des **valeurs inventées** qui montent de 3 % à chaque actualisation. Le popup porte alors
-un badge orange **DÉMO** et l'infobulle commence par `[Démo]`. Pour voir tes vrais chiffres, lance
-`python -m claude_tracker` **sans option**, ou l'exe. L'offre affichée (« Claude · Pro ») vient
-alors de ton compte, et les % doivent correspondre à `/usage` dans Claude Code.
+un badge orange **DÉMO** et l'infobulle commence par `[Démo]`. Sans option (ou avec l'appli installée),
+ce sont tes vrais chiffres : l'offre affichée (« Claude · Pro ») vient de ton compte, et les %
+correspondent à `/usage` dans Claude Code.
 
 <p align="center"><img src="docs/popup-demo.png" alt="Popup en mode démo" width="300"></p>
 
-## Construire l'exécutable
+### Construire l'installeur en local
 
 ```powershell
+winget install JRSoftware.InnoSetup   # une seule fois
 .\build.ps1
 ```
 
-Le script crée un venv, lance les tests et produit `dist\ClaudeTracker.exe`, un exe unique sans console.
-Place-le où tu veux, par exemple dans `%LOCALAPPDATA%\Programs\ClaudeTracker\`, puis coche
-**Lancer au démarrage** dans le menu.
+Le script lance les tests, construit l'appli avec PyInstaller (`dist\ClaudeTracker\`), puis produit
+l'installeur `dist\ClaudeTracker-<version>-Setup.exe` avec Inno Setup.
 
-> Si PowerShell refuse le script : `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+### Publier une version
+
+1. Change `__version__` dans `src/claude_tracker/__init__.py` (par exemple `0.2.0` → `0.2.1`).
+2. Fusionne dans `main`.
+
+Le workflow GitHub Actions (`.github/workflows/release.yml`) lance alors les tests, construit l'installeur
+sur un runner Windows et publie la release `v0.2.1`. Les applis installées la détectent ensuite toutes seules.
+Sur une pull request, le workflow construit l'installeur sans le publier : tu peux le télécharger dans les
+artefacts du run pour le tester.
 
 ## Ça ne remonte rien ?
 
-Lance le diagnostic dans un PowerShell, depuis le dossier du projet (venv activé) :
-
-```powershell
-python -m claude_tracker --check
-```
+Lance le diagnostic : raccourci **Claude Usage Tray - diagnostic** dans le menu Démarrer. En mode sources,
+utilise `python -m claude_tracker --check` (venv activé).
 
 Il vérifie chaque étape : fichier du jeton, expiration, appel à l'API et chiffres reçus. Il indique
 aussi quoi faire si une étape échoue. Le jeton n'est jamais affiché.
@@ -126,14 +122,15 @@ Les causes les plus fréquentes :
 
 ## Réglages
 
-Le fichier de réglages est `%APPDATA%\ClaudeTracker\config.json`. Il est créé dès que tu changes une option dans le menu.
+Le fichier de réglages est `%APPDATA%\ClaudeTracker\config.json`. Il est créé dès que tu changes une option dans le menu. Il n'est pas touché par les mises à jour.
 
 ```json
 {
   "poll_seconds": 120,
   "icon_metric": "five_hour",
   "notify_thresholds": [80, 95],
-  "auto_refresh_token": false
+  "auto_refresh_token": false,
+  "check_updates": true
 }
 ```
 
@@ -143,12 +140,14 @@ Le fichier de réglages est `%APPDATA%\ClaudeTracker\config.json`. Il est créé
 | `icon_metric` | Valeur affichée dans l'icône : `five_hour`, `seven_day` ou `max` (la plus élevée). |
 | `notify_thresholds` | Seuils (en %) qui déclenchent une notification. |
 | `auto_refresh_token` | Quand le jeton expire, l'appli le renouvelle elle-même (voir plus bas). |
+| `check_updates` | Vérifie les nouvelles versions sur GitHub (appli installée uniquement). |
 
 ### À propos du jeton
 
 Le jeton de Claude Code expire au bout de quelques heures et Claude Code le renouvelle à chaque utilisation.
-Par défaut, si le jeton a expiré, l'appli passe en gris et affiche « ouvre Claude Code ».
-Il suffit de lancer `claude` une fois pour que ça reparte.
+Par défaut, si le jeton a expiré, l'appli passe en gris et affiche un bouton **Se reconnecter à Claude**
+(également dans le menu clic droit). Il ouvre un PowerShell qui lance `claude` : Claude Code renouvelle le jeton,
+ou te demande de te reconnecter s'il ne peut pas. Ferme la fenêtre une fois fini : l'appli se rafraîchit aussitôt.
 
 Avec `auto_refresh_token: true`, l'appli renouvelle le jeton elle-même et réécrit le fichier.
 C'est pratique si tu n'utilises pas Claude Code tous les jours. L'inconvénient : une session Claude Code
@@ -164,7 +163,11 @@ src/claude_tracker/
 ├─ app.py           # Tk (thread principal) + pystray + thread de polling, reliés par une file
 ├─ formatting.py    # textes FR : « reset dans 2 h 14 », infobulle…
 ├─ config.py        # réglages JSON
+├─ updater.py       # vérifie la dernière release GitHub, télécharge et lance l'installeur
+├─ diagnose.py      # --check
 └─ autostart.py     # clé de registre HKCU\…\Run
+installer/ClaudeTracker.iss   # installeur Inno Setup (sans droits admin)
+.github/workflows/release.yml # CI : tests, build Windows, publication des releases
 ```
 
 L'endpoint `api.anthropic.com/api/oauth/usage` est celui qu'utilise Claude Code. Il n'est **pas documenté
