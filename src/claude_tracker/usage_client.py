@@ -70,6 +70,7 @@ class UsageSnapshot:
     windows: dict[str, UsageWindow]
     plan: str | None = None
     fetched_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    demo: bool = False  # fausses données (--demo)
 
     @property
     def session(self) -> UsageWindow | None:
@@ -81,7 +82,12 @@ class UsageSnapshot:
 
     @property
     def extras(self) -> list[UsageWindow]:
-        return [w for k, w in self.windows.items() if k not in ("five_hour", "seven_day")]
+        # Quotas secondaires (ex. Opus sur Max). Sur Pro, l'API les renvoie à 0 %
+        # sans date de reset : ils ne s'appliquent pas, on les masque.
+        return [
+            w for k, w in self.windows.items()
+            if k not in ("five_hour", "seven_day") and (w.resets_at is not None or w.utilization > 0)
+        ]
 
 
 @dataclass

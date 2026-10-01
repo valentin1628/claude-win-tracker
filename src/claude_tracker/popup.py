@@ -110,6 +110,10 @@ class UsagePopup(ctk.CTkToplevel):
             header, text="Claude", text_color=render.TEXT, font=ctk.CTkFont(size=15, weight="bold")
         )
         self.plan_label.pack(side="left", padx=(6, 0))
+        self.demo_badge = ctk.CTkLabel(
+            header, text=" DÉMO ", fg_color=render.ACCENT, text_color=render.BG, corner_radius=6,
+            font=ctk.CTkFont(size=10, weight="bold"), height=18,
+        )
         self.refresh_btn = ctk.CTkButton(
             header, text="⟳", width=30, height=28, corner_radius=8, fg_color="transparent",
             hover_color=render.CARD, text_color=render.TEXT_MUTED, font=ctk.CTkFont(size=16),
@@ -145,6 +149,10 @@ class UsagePopup(ctk.CTkToplevel):
         self._snapshot = snapshot
         offline = error is not None
         self.plan_label.configure(text=plan_label(snapshot.plan if snapshot else None))
+        if snapshot and snapshot.demo:
+            self.demo_badge.pack(side="left", padx=(8, 0))
+        else:
+            self.demo_badge.pack_forget()
         self.dot.configure(text_color=render.GREY if offline or not snapshot else render.ACCENT)
         self.session_card.set(snapshot.session if snapshot else None, offline)
         self.weekly_card.set(snapshot.weekly if snapshot else None, offline)

@@ -12,7 +12,7 @@ avec leurs heures de reset. Ce sont les mêmes chiffres que `/usage` dans Claude
 <p align="center"><img src="docs/tray-icons.png" alt="Icônes du tray" width="380"></p>
 
 - **Icône** : un anneau qui se remplit (vert < 60 %, orange < 85 %, rouge au-delà), avec le % au centre.
-- **Clic gauche** : mini-fenêtre avec les deux jauges, le compte à rebours avant reset et la jauge Opus/Sonnet si ton offre en a une.
+- **Clic gauche** : mini-fenêtre avec les deux jauges et le compte à rebours avant reset. Une ligne « Opus (semaine) » s'ajoute en bas uniquement sur les offres **Max**, qui ont un quota hebdo séparé pour Opus. Sur **Pro**, elle n'apparaît pas.
 - **Clic droit** : Rafraîchir, choix de la valeur affichée dans l'icône (session, semaine ou la plus élevée), lancement au démarrage de Windows, Quitter.
 - **Notifications** quand la session ou la semaine dépasse 80 % puis 95 %.
 - Survole l'icône pour un résumé dans l'infobulle.
@@ -32,6 +32,15 @@ pip install -e .[dev]
 python -m claude_tracker          # vraie appli
 python -m claude_tracker --demo   # fausses données, pour voir le rendu
 ```
+
+### Mode démo ou vraies données ?
+
+`--demo` affiche des **valeurs inventées** qui montent de 3 % à chaque actualisation. Le popup porte alors
+un badge orange **DÉMO** et l'infobulle commence par `[Démo]`. Pour voir tes vrais chiffres, lance
+`python -m claude_tracker` **sans option**, ou l'exe. L'offre affichée (« Claude · Pro ») vient
+alors de ton compte, et les % doivent correspondre à `/usage` dans Claude Code.
+
+<p align="center"><img src="docs/popup-demo.png" alt="Popup en mode démo" width="300"></p>
 
 ## Construire l'exécutable
 

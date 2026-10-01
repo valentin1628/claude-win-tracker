@@ -47,8 +47,23 @@ def test_parse_full_payload():
     assert snap.session.utilization == 42.0
     assert snap.session.resets_at == datetime(2026, 10, 1, 16, 30, 0, 123456, tzinfo=timezone.utc)
     assert snap.weekly.utilization == 18.0
-    assert [w.key for w in snap.extras] == ["seven_day_opus"]
-    assert snap.extras[0].resets_at is None
+    assert snap.windows["seven_day_opus"].resets_at is None
+    assert snap.extras == []  # Opus à 0 % sans reset : non applicable
+
+
+def test_extras_only_when_active():
+    payload = dict(SAMPLE, seven_day_opus={"utilization": 12, "resets_at": "2026-10-04T10:00:00Z"})
+    assert [w.key for w in uc.parse_usage(payload).extras] == ["seven_day_opus"]
+
+
+def test_pro_payload_has_no_extras():
+    payload = {
+        "five_hour": {"utilization": 30, "resets_at": "2026-10-01T16:30:00Z"},
+        "seven_day": {"utilization": 9, "resets_at": "2026-10-04T10:00:00Z"},
+        "seven_day_opus": None,
+        "seven_day_sonnet": None,
+    }
+    assert uc.parse_usage(payload, plan="pro").extras == []
 
 
 def test_parse_ignores_missing_and_null():
@@ -134,3 +149,5 @@ def test_formatting():
     tip = tooltip(uc.parse_usage(SAMPLE))
     assert "Session 5h : 42 %" in tip and "Semaine : 18 %" in tip
     assert len(tooltip(None, "x" * 300)) <= 127
+    demo = uc.UsageSnapshot(windows=uc.parse_usage(SAMPLE).windows, demo=True)
+    assert tooltip(demo).startswith("[Démo] ")

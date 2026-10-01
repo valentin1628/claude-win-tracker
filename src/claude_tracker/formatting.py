@@ -70,6 +70,8 @@ def tooltip(snapshot: UsageSnapshot | None, error: str | None = None) -> str:
     if w:
         parts.append(f"Semaine : {round(w.utilization)} %")
     text = "\n".join(parts) or "Claude Usage"
+    if snapshot.demo:
+        text = "[Démo] " + text
     if error:
         text += "\n(hors ligne)"
     return text[:127]

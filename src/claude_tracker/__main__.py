@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import itertools
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -13,20 +12,25 @@ from .usage_client import UsageSnapshot, UsageWindow
 
 
 class DemoFetcher:
-    """Fausses données qui évoluent à chaque appel, pour tester l'interface."""
+    """Fausses données (offre Pro) qui montent doucement, pour tester l'interface."""
+
+    STEP = 3.0
 
     def __init__(self) -> None:
-        self._values = itertools.cycle([12, 38, 64, 81, 97])
+        start = datetime.now(timezone.utc)
+        self._session_reset = start + timedelta(hours=5)
+        self._weekly_reset = start + timedelta(days=7)
+        self._session = 5.0 - self.STEP
 
     def fetch(self) -> UsageSnapshot:
-        now = datetime.now(timezone.utc)
-        v = float(next(self._values))
+        self._session += self.STEP
+        if self._session > 100:
+            self._session = 5.0
         windows = {
-            "five_hour": UsageWindow("five_hour", "Session 5h", v, now + timedelta(hours=2, minutes=14)),
-            "seven_day": UsageWindow("seven_day", "Semaine", v / 3, now + timedelta(days=3, hours=5)),
-            "seven_day_opus": UsageWindow("seven_day_opus", "Opus (semaine)", v / 6, now + timedelta(days=3)),
+            "five_hour": UsageWindow("five_hour", "Session 5h", self._session, self._session_reset),
+            "seven_day": UsageWindow("seven_day", "Semaine", 10 + self._session / 4, self._weekly_reset),
         }
-        return UsageSnapshot(windows=windows, plan="max")
+        return UsageSnapshot(windows=windows, plan="pro", demo=True)
 
 
 def _single_instance() -> bool:
