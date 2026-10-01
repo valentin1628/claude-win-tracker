@@ -47,11 +47,18 @@ def _single_instance() -> bool:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="claude_tracker", description="Suivi de l'abonnement Claude")
     parser.add_argument("--demo", action="store_true", help="utilise de fausses données")
+    parser.add_argument("--check", action="store_true", help="diagnostic de la connexion, sans lancer l'appli")
     parser.add_argument("--interval", type=int, help="intervalle de rafraîchissement (s, min 60)")
     parser.add_argument("--version", action="version", version=__version__)
     args = parser.parse_args()
 
+    if args.check:
+        from .diagnose import run
+
+        sys.exit(run())
+
     if not _single_instance():
+        print("Claude Usage Tray tourne déjà (regarde près de l'horloge, flèche ^).", file=sys.stderr)
         return
 
     config = Config.load()

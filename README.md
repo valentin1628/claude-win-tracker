@@ -54,6 +54,21 @@ Place-le où tu veux, par exemple dans `%LOCALAPPDATA%\Programs\ClaudeTracker\`,
 
 > Si PowerShell refuse le script : `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
+## Ça ne remonte rien ?
+
+Lance le diagnostic dans un PowerShell, depuis le dossier du projet (venv activé) :
+
+```powershell
+python -m claude_tracker --check
+```
+
+Il vérifie chaque étape : fichier du jeton, expiration, appel à l'API et chiffres reçus. Il indique
+aussi quoi faire si une étape échoue. Le jeton n'est jamais affiché.
+Les causes les plus fréquentes :
+- **Claude Code n'est pas installé ou connecté sur ce PC** : lance `claude` puis `/login`. Utiliser seulement claude.ai dans le navigateur ne suffit pas.
+- **Le jeton a expiré** : lance `claude` une fois pour qu'il le renouvelle.
+- **Proxy ou inspection HTTPS** (réseau d'entreprise) : l'erreur SSL s'affiche dans le diagnostic.
+
 ## Réglages
 
 Le fichier de réglages est `%APPDATA%\ClaudeTracker\config.json`. Il est créé dès que tu changes une option dans le menu.
