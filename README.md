@@ -49,16 +49,7 @@ Windows va probablement afficher un écran bleu « Windows a protégé votre ord
 
 Pas besoin d'être administrateur. Une fois l'installation finie, l'icône apparaît près de l'horloge.
 
-### Étape 3 (conseillée) : si tu n'utilises pas Claude Code tous les jours
-
-La connexion de Claude Code expire au bout de quelques heures. Normalement, c'est Claude Code qui la renouvelle quand tu t'en sers. Si tu ne l'utilises pas, l'appli peut s'en charger elle-même. Pour activer ça, ouvre PowerShell et colle ces deux lignes :
-
-```powershell
-New-Item -ItemType Directory -Force "$env:APPDATA\ClaudeTracker" | Out-Null
-'{"auto_refresh_token": true}' | Set-Content "$env:APPDATA\ClaudeTracker\config.json"
-```
-
-Puis redémarre l'appli (clic droit sur l'icône, Quitter, et relance-la depuis le menu Démarrer).
+C'est tout. La connexion de Claude Code expire toutes les quelques heures (et après un redémarrage du PC), mais l'appli la renouvelle toute seule, exactement comme le fait Claude Code. Tu n'as pas besoin d'ouvrir Claude Code pour que les chiffres restent à jour.
 
 ---
 
@@ -118,8 +109,11 @@ Tu peux aussi vérifier à la main avec **clic droit → Rechercher les mises à
 **Je ne vois pas l'icône.**
 Windows cache souvent les nouvelles icônes. Clique sur la petite flèche **^** à côté de l'horloge : elle y est sûrement. Pour la garder toujours visible : Paramètres → Personnalisation → Barre des tâches → Autres icônes de la barre d'état système, puis active **Claude Usage Tray**.
 
+**L'icône est grise juste après le démarrage du PC.**
+Rien d'anormal : le réseau n'est pas toujours prêt quand l'appli démarre. Elle réessaie au bout de 15 secondes, puis de 30 secondes.
+
 **L'icône est grise et la fenêtre dit « Connexion à Claude expirée ».**
-Clique sur le bouton **Se reconnecter à Claude** dans la fenêtre. Une fenêtre PowerShell s'ouvre avec Claude Code : s'il te le demande, reconnecte-toi, puis tape `/exit` et ferme la fenêtre. L'appli se met à jour aussitôt. Pour que ça n'arrive plus, fais l'[étape 3](#étape-3-conseillée--si-tu-nutilises-pas-claude-code-tous-les-jours).
+L'appli n'a pas réussi à renouveler la connexion. Ça arrive si tu t'es déconnecté de Claude Code, ou si la connexion a été révoquée (changement de mot de passe, par exemple). Clique sur le bouton **Se reconnecter à Claude** dans la fenêtre. Une fenêtre PowerShell s'ouvre avec Claude Code : s'il te le demande, reconnecte-toi, puis tape `/exit` et ferme la fenêtre. L'appli se met à jour aussitôt.
 
 **L'icône reste grise et je ne comprends pas pourquoi.**
 Dans le menu Démarrer, lance **Claude Usage Tray - diagnostic**. Une fenêtre vérifie chaque étape et te dit laquelle bloque, et quoi faire. Elle n'affiche aucune information secrète, tu peux en faire une capture pour demander de l'aide.
@@ -150,12 +144,12 @@ Tous les réglages sont dans le fichier `%APPDATA%\ClaudeTracker\config.json`. P
 | `notify_thresholds` | Paliers des notifications, en % | `[80, 95]` |
 | `notify_session` / `notify_weekly` | Notifier pour la session / pour la semaine | `true` |
 | `notify_recharge` | Notifier quand la session est rechargée | `false` |
-| `auto_refresh_token` | L'appli renouvelle elle-même la connexion (voir l'étape 3) | `false` |
+| `auto_refresh_token` | L'appli renouvelle elle-même la connexion quand elle expire | `true` |
 | `check_updates` | Rechercher les mises à jour | `true` |
 
 Après une modification, redémarre l'appli. Les mises à jour ne touchent pas à ce fichier.
 
-Pour les curieux : avec `auto_refresh_token`, l'appli renouvelle la connexion à la place de Claude Code. Si tu as une session Claude Code ouverte au même moment, elle pourra te demander de te reconnecter. C'est pour ça que ce n'est pas activé par défaut.
+Pour les curieux : quand la connexion expire, l'appli fait la même chose que Claude Code. Elle demande un nouveau jeton à Anthropic et l'enregistre dans le fichier de Claude Code, que les deux partagent. Si Claude Code l'a déjà renouvelé, l'appli réutilise simplement le sien. Avec `"auto_refresh_token": false`, l'appli ne touche jamais à ce fichier : il faudra alors ouvrir Claude Code (ou cliquer sur **Se reconnecter à Claude**) quand la connexion expire.
 
 ---
 
