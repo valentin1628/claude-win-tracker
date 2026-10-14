@@ -151,3 +151,92 @@ def test_formatting():
     assert len(tooltip(None, "x" * 300)) <= 127
     demo = uc.UsageSnapshot(windows=uc.parse_usage(SAMPLE).windows, demo=True)
     assert tooltip(demo).startswith("[Démo] ")
+
+
+def test_refresh_request_matches_claude_code(tmp_path, monkeypatch):
+    path = write_creds(tmp_path, expires_in_s=-10, scopes=["user:inference", "user:profile"])
+    client = uc.UsageClient(credentials_path=path, auto_refresh_token=True)
+    sent = {}
+
+    def fake_post(url, json, headers, timeout):
+        sent.update(url=url, body=json)
+        return FakeResponse(200, {"access_token": "new", "expires_in": 28800, "scope": "user:inference user:profile"})
+
+    monkeypatch.setattr(client.session, "post", fake_post)
+    monkeypatch.setattr(client.session, "get", lambda *a, **k: FakeResponse(200, SAMPLE))
+    client.fetch()
+    assert sent["url"] == "https://platform.claude.com/v1/oauth/token"
+    assert sent["body"] == {
+        "grant_type": "refresh_token",
+        "refresh_token": "sk-ant-ort01-test",
+        "client_id": uc.CLAUDE_CODE_CLIENT_ID,
+        "scope": "user:inference user:profile",
+    }
+    saved = json.loads(path.read_text())["claudeAiOauth"]
+    assert saved["refreshToken"] == "sk-ant-ort01-test"  # pas de nouveau refresh token : on garde l'ancien
+    assert saved["expiresAt"] > time.time() * 1000
+
+
+def test_refresh_uses_default_scopes_when_unknown(tmp_path, monkeypatch):
+    client = uc.UsageClient(credentials_path=write_creds(tmp_path, expires_in_s=-10), auto_refresh_token=True)
+    sent = {}
+
+    def fake_post(url, json, headers, timeout):
+        sent.update(json)
+        return FakeResponse(200, {"access_token": "new", "expires_in": 3600})
+
+    monkeypatch.setattr(client.session, "post", fake_post)
+    client.refresh()
+    assert sent["scope"].split() == list(uc.DEFAULT_SCOPES)
+
+
+def test_refresh_skipped_if_claude_code_already_renewed(tmp_path, monkeypatch):
+    # Le fetch a vu un jeton expiré, mais Claude Code a réécrit le fichier entre-temps.
+    path = write_creds(tmp_path, expires_in_s=3600)
+    client = uc.UsageClient(credentials_path=path, auto_refresh_token=True)
+
+    def boom(*a, **k):
+        raise AssertionError("aucun appel de renouvellement attendu")
+
+    monkeypatch.setattr(client.session, "post", boom)
+    assert client.refresh().access_token == "sk-ant-oat01-test"
+
+
+def test_token_close_to_expiry_is_renewed_early(tmp_path, monkeypatch):
+    client = uc.UsageClient(credentials_path=write_creds(tmp_path, expires_in_s=60), auto_refresh_token=True)
+    calls = []
+    monkeypatch.setattr(client.session, "post",
+                        lambda *a, **k: calls.append(1) or FakeResponse(200, {"access_token": "new", "expires_in": 3600}))
+    monkeypatch.setattr(client.session, "get", lambda *a, **k: FakeResponse(200, SAMPLE))
+    client.fetch()
+    assert calls == [1]
+
+
+@pytest.mark.parametrize("status,error", [(400, uc.TokenExpired), (401, uc.TokenExpired), (503, uc.NetworkError)])
+def test_refresh_failures(tmp_path, monkeypatch, status, error):
+    client = uc.UsageClient(credentials_path=write_creds(tmp_path, expires_in_s=-10), auto_refresh_token=True)
+    monkeypatch.setattr(client.session, "post", lambda *a, **k: FakeResponse(status, {"error": "invalid_grant"}))
+    with pytest.raises(error):
+        client.fetch()
+
+
+def test_auto_refresh_is_on_by_default(tmp_path):
+    from claude_tracker.config import Config
+
+    assert Config().auto_refresh_token is True
+    cfg = tmp_path / "config.json"
+    cfg.write_text('{"auto_refresh_token": false, "config_version": 2}')
+    assert Config.load(cfg).auto_refresh_token is False
+
+
+def test_old_config_false_is_migrated_but_new_false_is_kept(tmp_path):
+    from claude_tracker.config import Config
+
+    cfg = tmp_path / "config.json"
+    cfg.write_text('{"poll_seconds": 120, "auto_refresh_token": false}')  # écrit par la v0.3.0
+    assert Config.load(cfg).auto_refresh_token is True
+
+    loaded = Config.load(cfg)
+    loaded.auto_refresh_token = False
+    loaded.save(cfg)  # choix explicite en v0.4.0
+    assert Config.load(cfg).auto_refresh_token is False

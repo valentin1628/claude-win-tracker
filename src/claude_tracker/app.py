@@ -18,7 +18,7 @@ from . import APP_NAME, __version__, autostart, login, render, updater
 from .config import Config
 from .formatting import reset_clock, tooltip
 from .popup import UsagePopup
-from .usage_client import CredentialsNotFound, TokenExpired, UsageClient, UsageError, UsageSnapshot
+from .usage_client import CredentialsNotFound, NetworkError, TokenExpired, UsageClient, UsageError, UsageSnapshot
 
 
 def _same_window(a: datetime | None, b: datetime | None) -> bool:
@@ -42,6 +42,8 @@ class Fetcher(Protocol):
 
 METRIC_LABELS = {"five_hour": "Session 5h", "seven_day": "Semaine", "max": "Le plus élevé"}
 THRESHOLD_CHOICES = (50, 75, 80, 90, 95, 100)
+# Après une coupure réseau (ex. juste après le démarrage de Windows) : nouveaux essais rapprochés.
+NETWORK_RETRY_DELAYS = (15, 30)
 RECHARGE_MIN_PCT = 50  # « session rechargée » seulement si on l'avait bien entamée
 
 
@@ -188,19 +190,33 @@ class TrayApp:
         self._wake.set()
 
     def _poll_loop(self) -> None:
+        network_failures = 0
         while not self._stop.is_set():
-            try:
-                snapshot = self.fetcher.fetch()
-            except (TokenExpired, CredentialsNotFound) as exc:
-                self._ui(lambda msg=str(exc): self._on_error(msg, auth=True))
-            except UsageError as exc:
-                self._ui(lambda msg=str(exc): self._on_error(msg))
-            except Exception as exc:  # ne jamais tuer le thread de polling
-                self._ui(lambda msg=f"Erreur inattendue : {exc}": self._on_error(msg))
-            else:
-                self._ui(lambda s=snapshot: self._on_snapshot(s))
-            self._wake.wait(self.config.poll_seconds)
+            network_failures = self._poll_once(network_failures)
+            self._wake.wait(self.next_delay(network_failures))
             self._wake.clear()
+
+    def _poll_once(self, network_failures: int) -> int:
+        """Un relevé. Renvoie le nombre d'erreurs réseau consécutives."""
+        try:
+            snapshot = self.fetcher.fetch()
+        except (TokenExpired, CredentialsNotFound) as exc:
+            self._ui(lambda msg=str(exc): self._on_error(msg, auth=True))
+        except NetworkError as exc:
+            self._ui(lambda msg=str(exc): self._on_error(msg))
+            return network_failures + 1
+        except UsageError as exc:
+            self._ui(lambda msg=str(exc): self._on_error(msg))
+        except Exception as exc:  # ne jamais tuer le thread de polling
+            self._ui(lambda msg=f"Erreur inattendue : {exc}": self._on_error(msg))
+        else:
+            self._ui(lambda s=snapshot: self._on_snapshot(s))
+        return 0
+
+    def next_delay(self, network_failures: int) -> float:
+        if 0 < network_failures <= len(NETWORK_RETRY_DELAYS):
+            return min(NETWORK_RETRY_DELAYS[network_failures - 1], self.config.poll_seconds)
+        return self.config.poll_seconds
 
     # ------------------------------------------------------ mises à jour
     UPDATE_FIRST_DELAY = 30

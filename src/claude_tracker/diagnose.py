@@ -14,9 +14,11 @@ from pathlib import Path
 import requests
 
 from . import __version__
+from .config import Config
 from .usage_client import (
     OAUTH_BETA,
     USAGE_URL,
+    UsageClient,
     UsageError,
     default_credentials_path,
     load_credentials,
@@ -29,8 +31,14 @@ def _line(ok: bool | None, message: str) -> None:
     print(f"{tag} {message}")
 
 
-def run(credentials_path: Path | None = None, session: requests.Session | None = None) -> int:
+def run(
+    credentials_path: Path | None = None,
+    session: requests.Session | None = None,
+    auto_refresh: bool | None = None,
+) -> int:
     """Retourne 0 si tout va bien, 1 sinon."""
+    if auto_refresh is None:
+        auto_refresh = Config.load().auto_refresh_token
     _line(None, f"Claude Usage Tray {__version__} - Python {platform.python_version()} - {platform.platform()}")
 
     path = credentials_path or default_credentials_path()
@@ -48,15 +56,26 @@ def run(credentials_path: Path | None = None, session: requests.Session | None =
         return 1
     _line(True, f"Jeton présent - offre : {creds.plan or 'inconnue'}")
 
-    if creds.expires_at:
+    http = session or requests.Session()
+    if creds.expires_at and creds.expiring:
         local = creds.expires_at.astimezone()
-        if creds.expired:
-            _line(False, f"Jeton expiré depuis le {local:%d/%m %H:%M}")
+        if not (auto_refresh and creds.refresh_token):
+            _line(False, f"Jeton expiré depuis le {local:%d/%m %H:%M} (renouvellement automatique désactivé)")
             print("       -> Lance `claude` (Claude Code) une fois pour qu'il le renouvelle, puis relance ce test.")
             return 1
-        _line(True, f"Jeton valide jusqu'au {local:%d/%m %H:%M}")
+        _line(None, f"Jeton expiré le {local:%d/%m %H:%M} : renouvellement...")
+        client = UsageClient(credentials_path=path, auto_refresh_token=True)
+        client.session = http
+        try:
+            creds = client.refresh()
+        except UsageError as exc:
+            _line(False, f"Renouvellement impossible : {exc}")
+            print("       -> Lance `claude` puis `/login` pour te reconnecter.")
+            return 1
+        _line(True, "Jeton renouvelé")
+    if creds.expires_at:
+        _line(True, f"Jeton valide jusqu'au {creds.expires_at.astimezone():%d/%m %H:%M}")
 
-    http = session or requests.Session()
     try:
         resp = http.get(
             USAGE_URL,

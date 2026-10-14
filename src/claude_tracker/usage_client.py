@@ -21,10 +21,13 @@ import requests
 from . import __version__
 
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
-TOKEN_URL = "https://console.anthropic.com/v1/oauth/token"
+# Renouvellement du jeton : mêmes adresse, client_id et format que Claude Code (vérifié sur la v2.1.299).
+TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 OAUTH_BETA = "oauth-2025-04-20"
-# client_id public de Claude Code (nécessaire uniquement pour le refresh).
 CLAUDE_CODE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+DEFAULT_SCOPES = ("user:profile", "user:inference", "user:sessions:claude_code", "user:mcp_servers", "user:file_upload")
+# On renouvelle un peu avant l'expiration, comme Claude Code.
+EXPIRY_MARGIN_S = 300
 
 # Clés de la réponse API -> libellé affiché.
 WINDOW_LABELS = {
@@ -97,10 +100,18 @@ class Credentials:
     expires_at: datetime | None
     plan: str | None
     raw: dict[str, Any]
+    scopes: tuple[str, ...] = ()
 
     @property
     def expired(self) -> bool:
         return self.expires_at is not None and self.expires_at <= datetime.now(timezone.utc)
+
+    @property
+    def expiring(self) -> bool:
+        """Expiré ou sur le point de l'être : il est temps de renouveler."""
+        if self.expires_at is None:
+            return False
+        return (self.expires_at - datetime.now(timezone.utc)).total_seconds() <= EXPIRY_MARGIN_S
 
 
 # --------------------------------------------------------------------------- #
@@ -166,6 +177,7 @@ def load_credentials(path: Path | None = None) -> Credentials:
         expires_at=expires_at,
         plan=oauth.get("subscriptionType"),
         raw=raw,
+        scopes=tuple(s for s in oauth.get("scopes") or () if isinstance(s, str)),
     )
 
 
@@ -188,12 +200,14 @@ class UsageClient:
     def fetch(self) -> UsageSnapshot:
         # Le fichier est relu à chaque fois : Claude Code a pu renouveler le jeton.
         creds = load_credentials(self.credentials_path)
-        if creds.expired:
-            creds = self._refresh_or_raise(creds)
+        if creds.expiring and self.auto_refresh_token and creds.refresh_token:
+            creds = self.refresh()
+        elif creds.expired:
+            raise TokenExpired("Connexion à Claude expirée")
 
         resp = self._get_usage(creds.access_token)
         if resp.status_code == 401 and self.auto_refresh_token and creds.refresh_token:
-            creds = self._refresh_or_raise(creds)
+            creds = self.refresh(force=True)
             resp = self._get_usage(creds.access_token)
         if resp.status_code == 401:
             raise TokenExpired("Connexion à Claude expirée")
@@ -217,8 +231,16 @@ class UsageClient:
         except requests.RequestException as exc:
             raise NetworkError(f"Hors ligne ({exc.__class__.__name__})") from None
 
-    def _refresh_or_raise(self, creds: Credentials) -> Credentials:
-        if not (self.auto_refresh_token and creds.refresh_token):
+    def refresh(self, force: bool = False) -> Credentials:
+        """Renouvelle le jeton avec le refresh token, comme le fait Claude Code.
+
+        Le fichier est relu juste avant : si Claude Code vient de le renouveler,
+        on réutilise son jeton sans rien demander au serveur.
+        """
+        creds = load_credentials(self.credentials_path)
+        if not force and not creds.expiring:
+            return creds
+        if not creds.refresh_token:
             raise TokenExpired("Connexion à Claude expirée")
         try:
             resp = self.session.post(
@@ -227,23 +249,30 @@ class UsageClient:
                     "grant_type": "refresh_token",
                     "refresh_token": creds.refresh_token,
                     "client_id": CLAUDE_CODE_CLIENT_ID,
+                    "scope": " ".join(creds.scopes or DEFAULT_SCOPES),
                 },
+                headers={"Content-Type": "application/json"},
                 timeout=self.timeout,
             )
         except requests.RequestException as exc:
             raise NetworkError(f"Hors ligne ({exc.__class__.__name__})") from None
-        if not resp.ok:
-            raise TokenExpired("Connexion à Claude expirée (renouvellement refusé)")
+        if resp.status_code >= 500 or resp.status_code == 429:
+            raise NetworkError(f"Renouvellement indisponible ({resp.status_code}), nouvel essai plus tard")
+        try:
+            data = resp.json() if resp.ok else {}
+            access_token = data["access_token"]
+        except (ValueError, KeyError, TypeError):
+            raise TokenExpired("Connexion à Claude expirée (renouvellement refusé)") from None
 
-        data = resp.json()
         oauth = dict(creds.raw.get("claudeAiOauth") or {})
-        oauth["accessToken"] = data["access_token"]
+        oauth["accessToken"] = access_token
         if data.get("refresh_token"):
             oauth["refreshToken"] = data["refresh_token"]
         if data.get("expires_in"):
-            oauth["expiresAt"] = int((time.time() + data["expires_in"]) * 1000)
-        raw = dict(creds.raw, claudeAiOauth=oauth)
-        _atomic_write_json(self.credentials_path, raw)
+            oauth["expiresAt"] = int((time.time() + float(data["expires_in"])) * 1000)
+        if isinstance(data.get("scope"), str) and data["scope"].strip():
+            oauth["scopes"] = data["scope"].split()
+        _atomic_write_json(self.credentials_path, dict(creds.raw, claudeAiOauth=oauth))
         return load_credentials(self.credentials_path)
 
 
