@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 import time
 import tkinter as tk
@@ -341,6 +342,7 @@ class UsagePopup(ctk.CTkToplevel):
         self.geometry(f"+{right - w - MARGIN}+{max(top, bottom - h - MARGIN)}")
 
     def show(self) -> None:
+        logging.getLogger("claude_tracker").info("Popup affiché")
         self._reposition()
         self.deiconify()
         self.lift()
@@ -354,6 +356,7 @@ class UsagePopup(ctk.CTkToplevel):
             self._tick()
 
     def hide(self) -> None:
+        logging.getLogger("claude_tracker").info("Popup masqué")
         if self._tick_job is not None:
             self.after_cancel(self._tick_job)
             self._tick_job = None

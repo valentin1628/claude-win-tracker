@@ -670,6 +670,9 @@ class TrayApp:
         self.minibar.enable(self.config.minibar and not IS_MAC)
         self.root.after(30_000, self._watch_theme)
         self.root.after(3000, self._announce_version)
+        if IS_MAC:
+            # Repère pour le diagnostic (et le test de la CI qui clique dessus).
+            self.root.after(2000, lambda: log.info("Icône de la barre de menus : %s", self.icon.anchor()))
         self.root.after(100, self._drain_ui_queue)
         self.root.mainloop()
 

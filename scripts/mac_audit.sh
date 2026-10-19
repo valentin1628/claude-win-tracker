@@ -10,18 +10,38 @@ mkdir -p ~/.claude/projects/demo
 echo '{"type":"assistant","timestamp":"2026-01-01T00:00:00Z","requestId":"r","message":{"id":"m","model":"claude-sonnet-4-5","usage":{"input_tokens":10,"output_tokens":5}}}' \
     > ~/.claude/projects/demo/a.jsonl
 
-# Lancée avec open, comme depuis le Finder (dossier courant /, LaunchServices).
+applog=~/Library/Logs/ClaudeTracker/claude-tracker.log
+rm -f ~/Library/Logs/ClaudeTracker/*.log
+
+# Lancée avec open, comme depuis le Finder (dossier courant /, LaunchServices), en mode
+# démo pour avoir des chiffres, des notifications et l'historique comme en vrai.
 sudo fs_usage -w -f filesys "Claude Usage Tra" > fs.log 2>&1 &
 tracer=$!
 sleep 2
-open -W -n "dist/Claude Usage Tray.app" --args --exit-after 45
-status=$?
+open -n "dist/Claude Usage Tray.app" --args --demo --exit-after 45
+python scripts/mac_clicks.py "$applog" || true
+
+# L'appli doit s'être fermée toute seule (--exit-after) : sinon elle est figée.
+status=0
+for _ in $(seq 1 40); do
+    pgrep -f "Claude Usage Tray.app/Contents/MacOS" > /dev/null || break
+    sleep 1
+done
+if pgrep -f "Claude Usage Tray.app/Contents/MacOS" > /dev/null; then
+    echo "::error::L'appli ne s'est pas fermée : elle est figée"
+    sample "Claude Usage Tray" 3 2>/dev/null | head -80 || true
+    pkill -9 -f "Claude Usage Tray.app/Contents/MacOS"
+    status=1
+fi
 sudo kill -INT "$tracer" 2>/dev/null
 sleep 1
 
-echo "--- fin de l'appli (code $status) ---"
+echo "--- rapports de plantage macOS ---"
+ls -la ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i claude && \
+    head -60 ~/Library/Logs/DiagnosticReports/*Claude* 2>/dev/null && status=1
 echo "--- journal ---"
 cat ~/Library/Logs/ClaudeTracker/*.log 2>/dev/null || true
+grep -q "Popup affiché" "$applog" || echo "::warning::Aucun clic n'a atteint l'appli (CGEventPost refusé ?)"
 echo "--- dossiers ouverts sous \$HOME (aperçu) ---"
 grep -oE "$HOME/[^ ]+" fs.log | awk -F/ '{print "/"$2"/"$3"/"$4"/"$5}' | sort | uniq -c | sort -rn | head -40
 
