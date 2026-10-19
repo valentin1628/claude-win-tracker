@@ -31,11 +31,13 @@ echo "Construction de l'appli (PyInstaller)..."
 
 app="dist/$APP_NAME.app"
 plist="$app/Contents/Info.plist"
-# Appli de barre de menus : pas d'icône dans le Dock.
-/usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$plist" 2>/dev/null \
-    || /usr/libexec/PlistBuddy -c "Set :LSUIElement true" "$plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" "$plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $version" "$plist"
+plist_set() {  # plist_set <clé> <type> <valeur> : modifie la clé, ou l'ajoute si elle n'existe pas
+    /usr/libexec/PlistBuddy -c "Set :$1 $3" "$plist" 2>/dev/null \
+        || /usr/libexec/PlistBuddy -c "Add :$1 $2 $3" "$plist"
+}
+plist_set LSUIElement bool true  # appli de barre de menus : pas d'icône dans le Dock
+plist_set CFBundleShortVersionString string "$version"
+plist_set CFBundleVersion string "$version"
 # Info.plist modifié : on refait la signature ad hoc (obligatoire sur Apple Silicon).
 codesign --force --deep --sign - "$app"
 codesign --verify --deep "$app"
