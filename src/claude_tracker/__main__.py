@@ -95,6 +95,11 @@ def main() -> None:
 
         sys.exit(_run_check(run))
 
+    from . import applog
+
+    applog.setup()
+    applog.log.info("Démarrage v%s (%s)", __version__, sys.platform)
+
     if not _single_instance():
         where = "dans la barre de menus, en haut" if sys.platform == "darwin" else "près de l'horloge, flèche ^"
         print(f"Claude Usage Tray tourne déjà (regarde {where}).", file=sys.stderr)
