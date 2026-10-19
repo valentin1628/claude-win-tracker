@@ -100,6 +100,10 @@ Pour qu'elle se lance toute seule : clic droit sur la jauge → **Lancer au dém
 ```
 Il te dit où il a cherché la connexion (Trousseau ou fichier) et ce qui bloque.
 
+**L'appli se ferme ou se fige** : son journal est dans `~/Library/Logs/ClaudeTracker/` (lisible avec l'appli **Console**). Envoie-le avec ta description du problème.
+
+**Installe-la bien dans Applications** : glisse l'appli (pas le fichier `.dmg`) sur le raccourci Applications, puis éjecte le disque. Lancée depuis le `.dmg` ouvert, macOS la traite comme une appli sur disque externe.
+
 **Désinstaller** : clic droit → Quitter, puis mets l'appli à la corbeille. Les réglages sont dans `~/Library/Application Support/ClaudeTracker`.
 
 ---
