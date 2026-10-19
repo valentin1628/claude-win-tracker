@@ -57,6 +57,32 @@ class NetworkError(UsageError):
     pass
 
 
+class RateLimited(UsageError):
+    """HTTP 429 : Anthropic demande d'espacer les requêtes. Pas une panne."""
+
+    def __init__(self, retry_after: float | None = None) -> None:
+        super().__init__("Anthropic limite les actualisations")
+        self.retry_after = retry_after
+
+
+def parse_retry_after(value: str | None) -> float | None:
+    """En-tête Retry-After : un nombre de secondes ou une date HTTP."""
+    if not value:
+        return None
+    value = value.strip()
+    if value.isdigit():
+        return float(value)
+    try:
+        from email.utils import parsedate_to_datetime
+
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+
+
 # --------------------------------------------------------------------------- #
 # Modèle de données
 # --------------------------------------------------------------------------- #
@@ -212,7 +238,7 @@ class UsageClient:
         if resp.status_code == 401:
             raise TokenExpired("Connexion à Claude expirée")
         if resp.status_code == 429:
-            raise NetworkError("Trop de requêtes, nouvel essai plus tard")
+            raise RateLimited(parse_retry_after(resp.headers.get("Retry-After")))
         if not resp.ok:
             raise NetworkError(f"Erreur API ({resp.status_code})")
         try:
@@ -256,7 +282,9 @@ class UsageClient:
             )
         except requests.RequestException as exc:
             raise NetworkError(f"Hors ligne ({exc.__class__.__name__})") from None
-        if resp.status_code >= 500 or resp.status_code == 429:
+        if resp.status_code == 429:
+            raise RateLimited(parse_retry_after(resp.headers.get("Retry-After")))
+        if resp.status_code >= 500:
             raise NetworkError(f"Renouvellement indisponible ({resp.status_code}), nouvel essai plus tard")
         try:
             data = resp.json() if resp.ok else {}

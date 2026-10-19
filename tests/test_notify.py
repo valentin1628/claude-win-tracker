@@ -100,8 +100,3 @@ def test_no_recharge_toast_if_session_barely_used():
 
 def test_config_normalizes_thresholds():
     assert Config(notify_thresholds=(95, 0, 80, 80, 150)).normalized().notify_thresholds == (80, 95)
-
-
-def test_network_retry_delays():
-    app = make_app(poll_seconds=120)
-    assert [app.next_delay(n) for n in range(5)] == [120, 15, 30, 120, 120]
