@@ -39,11 +39,17 @@ from .usage_client import (
 IS_MAC = sys.platform == "darwin"
 UI_POLL_MS = 100
 
-# customtkinter vérifie le thème du système toutes les 30 ms et l'échelle de l'écran toutes
-# les 100 ms, en permanence : ~40 réveils par seconde pour rien (2 % de CPU au repos).
-# Le thème est déjà suivi par _watch_theme ; une vérification par seconde suffit largement.
-ctk.AppearanceModeTracker.update_loop_interval = 1000
-ctk.ScalingTracker.update_loop_interval = 1000
+# customtkinter fait tourner deux boucles permanentes, même fenêtres fermées :
+# - le thème du système, toutes les 30 ms : inutile partout, l'appli impose clair ou sombre
+#   et suit elle-même le mode « auto » (_watch_theme, toutes les 30 s) ;
+# - l'échelle de l'écran, toutes les 100 ms : utile sous Windows (fenêtre déplacée vers un
+#   écran réglé à une autre échelle), inutile sur Mac où macOS gère lui-même le Retina.
+# Une boucle marquée « déjà lancée » n'est jamais démarrée par customtkinter.
+ctk.AppearanceModeTracker.update_loop_running = True
+if IS_MAC:
+    ctk.ScalingTracker.update_loop_running = True
+else:
+    ctk.ScalingTracker.update_loop_interval = 1000
 
 def _same_window(a: datetime | None, b: datetime | None) -> bool:
     # resets_at peut varier de quelques secondes d'un appel à l'autre.
@@ -132,7 +138,7 @@ class TrayApp:
         self.forecasts: dict[str, Forecast | None] = {}
         self._forecast_notified: dict[str, datetime | None] = {}
         self.popup = self._make_popup()
-        self.minibar = MiniBar(self.root)
+        self.minibar = None if IS_MAC else MiniBar(self.root)  # Windows uniquement
         self.hotkey: hotkey.GlobalHotkey | None = None
         self.settings_window = None
         self._update_thread: threading.Thread | None = None
@@ -462,7 +468,8 @@ class TrayApp:
         else:
             self.icon.icon = render.tray_icon(self._icon_value(), offline=offline, light_taskbar=self._taskbar_light)
             self.icon.title = tooltip(self.snapshot, self.error)
-        self.minibar.set_value(self._icon_value(), offline)
+        if self.minibar:
+            self.minibar.set_value(self._icon_value(), offline)
         self.popup.update_state(self.snapshot, self.error, show_login=self.auth_error, notice=self.notice)
         self.popup.update_extras(
             {k: forecast_text(fc) for k, fc in self.forecasts.items()},
@@ -647,7 +654,7 @@ class TrayApp:
             self._apply_theme()
         elif attr in ("hotkey", "hotkey_enabled"):
             self._restart_hotkey()
-        elif attr == "minibar":
+        elif attr == "minibar" and self.minibar:
             self.minibar.enable(self.config.minibar)
         elif attr == "auto_refresh_token" and isinstance(self.fetcher, UsageClient):
             self.fetcher.auto_refresh_token = self.config.auto_refresh_token
@@ -674,7 +681,8 @@ class TrayApp:
         threading.Thread(target=self._cost_loop, name="cost-scan", daemon=True).start()
         self._start_update_loop()
         self._restart_hotkey()
-        self.minibar.enable(self.config.minibar and not IS_MAC)
+        if self.minibar:
+            self.minibar.enable(self.config.minibar)
         self.root.after(30_000, self._watch_theme)
         self.root.after(3000, self._announce_version)
         if IS_MAC:

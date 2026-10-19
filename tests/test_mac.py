@@ -151,3 +151,17 @@ def test_terminal_login_command_is_escaped():
     inner = script[len('tell application "Terminal" to do script "'):-1]
     assert '"' not in inner.replace('\\"', "")
     assert login.MAC_INSTALL_CMD in inner
+
+
+def test_customtkinter_background_loops_disabled():
+    pytest = __import__("pytest")
+    pytest.importorskip("tkinter")
+    ctk = pytest.importorskip("customtkinter")
+    from claude_tracker import app
+
+    # Le thème est suivi par l'appli elle-même : la boucle de customtkinter (30 ms) ne tourne pas.
+    assert ctk.AppearanceModeTracker.update_loop_running is True
+    if app.IS_MAC:
+        assert ctk.ScalingTracker.update_loop_running is True
+    else:
+        assert ctk.ScalingTracker.update_loop_interval == 1000
