@@ -1,11 +1,12 @@
 """Orchestration : Tk dans le thread principal, pystray et le polling à côté.
 
 Les autres threads ne touchent jamais Tk directement : ils déposent des messages
-dans une file que la boucle Tk consomme toutes les 100 ms.
+dans une file que la boucle Tk vide dès qu'elle est réveillée (voir _setup_wakeup).
 """
 
 from __future__ import annotations
 
+import os
 import queue
 import sqlite3
 import sys
@@ -37,7 +38,10 @@ from .usage_client import (
 )
 
 IS_MAC = sys.platform == "darwin"
-UI_POLL_MS = 100
+# La file des tâches d'interface est vidée dès qu'on la remplit (réveil par un tube, hors
+# Windows) ; le passage périodique n'est qu'un filet de sécurité. Sous Windows, où Tk ne
+# sait pas surveiller un tube, on garde un passage toutes les 100 ms.
+UI_POLL_MS = 100 if sys.platform == "win32" else 2000
 
 # customtkinter fait tourner deux boucles permanentes, même fenêtres fermées :
 # - le thème du système, toutes les 30 ms : inutile partout, l'appli impose clair ou sombre
@@ -266,8 +270,39 @@ class TrayApp:
     # ----------------------------------------------------------- threads
     def _ui(self, fn: Callable[[], None]) -> None:
         self._ui_queue.put(fn)
+        wake_fd = getattr(self, "_wake_w", None)
+        if wake_fd is not None:
+            try:
+                os.write(wake_fd, b"\0")  # simple appel système : sans risque depuis AppKit ou un thread
+            except OSError:
+                pass  # tube plein : un réveil est déjà en attente
+
+    def _setup_wakeup(self) -> None:
+        """Réveille la boucle Tk dès qu'une tâche arrive, au lieu de vérifier 10 fois par seconde."""
+        self._wake_w = None
+        if sys.platform == "win32":
+            return
+        import tkinter
+
+        read_fd, write_fd = os.pipe()
+        os.set_blocking(read_fd, False)
+        os.set_blocking(write_fd, False)
+        self.root.tk.createfilehandler(read_fd, tkinter.READABLE, self._on_wakeup)
+        self._wake_r, self._wake_w = read_fd, write_fd
+
+    def _on_wakeup(self, fd: int, _mask: int) -> None:
+        try:
+            os.read(fd, 4096)
+        except OSError:
+            pass
+        self._run_ui_tasks()
 
     def _drain_ui_queue(self) -> None:
+        self._run_ui_tasks()
+        # Toujours replanifié : root.quit() peut arriver après _stop.set().
+        self.root.after(UI_POLL_MS, self._drain_ui_queue)
+
+    def _run_ui_tasks(self) -> None:
         while True:
             try:
                 fn = self._ui_queue.get_nowait()
@@ -277,8 +312,6 @@ class TrayApp:
                 fn()
             except Exception:  # une erreur ne doit pas figer toute l'interface
                 log.exception("Erreur dans l'interface")
-        # Toujours replanifié : root.quit() peut arriver après _stop.set().
-        self.root.after(UI_POLL_MS, self._drain_ui_queue)
 
     def request_refresh(self) -> None:
         self._wake.set()
@@ -688,6 +721,7 @@ class TrayApp:
         if IS_MAC:
             # Repère pour le diagnostic (et le test de la CI qui clique dessus).
             self.root.after(2000, lambda: log.info("Icône de la barre de menus : %s", self.icon.anchor()))
+        self._setup_wakeup()
         self.root.after(100, self._drain_ui_queue)
         self.root.mainloop()
 
