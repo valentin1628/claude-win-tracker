@@ -75,3 +75,32 @@ def tooltip(snapshot: UsageSnapshot | None, error: str | None = None) -> str:
     if error:
         text += "\n(hors ligne)"
     return text[:127]
+
+
+def forecast_text(fc, now: datetime | None = None) -> str:
+    """Ligne sous la jauge : « 100 % vers 15:40 » ou « tient jusqu'au reset »."""
+    if fc is None:
+        return ""
+    if fc.kind == "safe":
+        return "tient jusqu'au reset"
+    local = fc.at.astimezone()
+    now_local = (now or _now()).astimezone()
+    if local.date() == now_local.date():
+        return f"100 % vers {local:%H:%M}"
+    return f"100 % {_DAYS[local.weekday()]} {local:%H:%M}"
+
+
+def money(value: float) -> str:
+    """12.5 -> « 12,50 $ » (format français, montants en dollars)."""
+    return f"{value:,.2f}".replace(",", " ").replace(".", ",") + " $"
+
+
+def cost_text(summary) -> str:
+    if summary is None:
+        return "Coût équivalent API : calcul en cours…"
+    if summary.messages == 0:
+        return "Coût équivalent API : aucun usage de Claude Code ce mois-ci"
+    text = f"Aujourd'hui : {money(summary.today)}   ·   Ce mois : {money(summary.month)}"
+    if summary.unknown_tokens:
+        text += f"\n(+ {summary.unknown_tokens:,} tokens d'un modèle sans tarif connu)".replace(",", " ")
+    return text

@@ -79,6 +79,25 @@ C'est tout. La connexion de Claude Code expire toutes les quelques heures (et ap
 
 Sur les abonnements Max, une ligne « Opus (semaine) » peut apparaître en bas de la fenêtre : c'est un quota séparé pour le modèle Opus. Sur Pro, elle n'apparaît pas.
 
+### Prévision
+
+Sous chaque jauge, l'appli estime où tu vas à ton rythme actuel :
+- **« 100 % vers 15:40 »** : si tu continues comme ça, tu atteindras la limite à cette heure-là.
+- **« tient jusqu'au reset »** : à ce rythme, tu n'atteindras pas la limite avant la recharge.
+
+La prévision se base sur la dernière heure pour la session, et sur les dernières 24 heures pour la semaine. Il lui faut une dizaine de minutes de relevés avant de s'afficher.
+
+### Détails
+
+Le bouton **Détails ▾** en bas de la fenêtre déplie :
+- la courbe de ta session sur les dernières 24 heures ;
+- ta consommation de la semaine, jour par jour ;
+- le **coût équivalent API** : ce que ton usage de Claude Code aurait coûté au tarif public de l'API, aujourd'hui et ce mois-ci. Seul Claude Code est compté (claude.ai et Claude Desktop ne laissent pas de trace sur ton PC). Pratique pour voir si ton abonnement est rentable.
+
+<p align="center"><img src="docs/popup-details.png" alt="Le volet Détails" width="300"></p>
+
+Tout reste sur ton PC : l'historique est enregistré dans `%APPDATA%\ClaudeTracker\history.db`, et le coût est calculé à partir des journaux que Claude Code garde déjà dans `%USERPROFILE%\.claude\projects`.
+
 ---
 
 ## Notifications
@@ -90,6 +109,7 @@ Par défaut, tu es prévenu à **80 %** et à **95 %**. Tout se règle dans **cl
 - **À 50 %, 75 %, 80 %, 90 %, 95 %, 100 %** : coche les paliers qui t'intéressent.
 - **Pour la session 5h / Pour la semaine** : choisir quels quotas surveiller.
 - **Quand la session est rechargée** : être prévenu quand ta session repart à zéro.
+- **Si la limite approche à ce rythme** : être prévenu quand la prévision annonce la limite dans moins de 45 minutes (session) ou de 24 heures (semaine).
 - **Tester une notification** : pour voir à quoi ça ressemble.
 
 Tu n'es prévenu qu'une fois par palier, au moment où tu le dépasses.
@@ -147,6 +167,7 @@ Tous les réglages sont dans le fichier `%APPDATA%\ClaudeTracker\config.json`. P
 | `notify_thresholds` | Paliers des notifications, en % | `[80, 95]` |
 | `notify_session` / `notify_weekly` | Notifier pour la session / pour la semaine | `true` |
 | `notify_recharge` | Notifier quand la session est rechargée | `false` |
+| `notify_forecast` | Notifier quand la prévision annonce la limite bientôt | `false` |
 | `auto_refresh_token` | L'appli renouvelle elle-même la connexion quand elle expire | `true` |
 | `check_updates` | Rechercher les mises à jour | `true` |
 
@@ -173,6 +194,9 @@ src/claude_tracker/
 ├─ config.py         réglages
 ├─ updater.py        mises à jour depuis les releases GitHub
 ├─ login.py          bouton « Se reconnecter »
+├─ history.py        historique local (SQLite)
+├─ forecast.py       prévision du rythme
+├─ costs.py          coût équivalent API (journaux de Claude Code)
 ├─ diagnose.py       diagnostic (--check)
 └─ autostart.py      lancement au démarrage
 installer/ClaudeTracker.iss     installeur (Inno Setup)

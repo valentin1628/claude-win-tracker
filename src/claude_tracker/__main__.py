@@ -88,7 +88,9 @@ def main() -> None:
 
     if args.demo:
         config.poll_seconds = 60
-        TrayApp(config, fetcher=DemoFetcher()).run()
+        from .history import History
+
+        TrayApp(config, fetcher=DemoFetcher(), history=History(":memory:")).run()
     else:
         TrayApp(config).run()
 

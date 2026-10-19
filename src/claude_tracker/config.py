@@ -27,8 +27,10 @@ class Config:
     notify_session: bool = True
     notify_weekly: bool = True
     notify_recharge: bool = False
+    notify_forecast: bool = False
     auto_refresh_token: bool = True  # comme Claude Code : renouvelle le jeton expiré en silence
     check_updates: bool = True
+    details_open: bool = False
     config_version: int = CONFIG_VERSION
 
     def normalized(self) -> "Config":
