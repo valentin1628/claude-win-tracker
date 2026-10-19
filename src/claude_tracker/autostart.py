@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import plistlib
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 VALUE_NAME = "ClaudeUsageTray"
@@ -46,7 +46,7 @@ def mac_program_arguments(executable: str | None = None, frozen: bool | None = N
     frozen = getattr(sys, "frozen", False) if frozen is None else frozen
     if frozen:
         # …/Claude Usage Tray.app/Contents/MacOS/Claude Usage Tray -> on lance le bundle avec open.
-        exe = Path(executable)
+        exe = PurePosixPath(executable)  # chemin macOS, même quand les tests tournent sous Windows
         if len(exe.parents) >= 3 and exe.parents[2].suffix == ".app":
             return ["/usr/bin/open", "-a", str(exe.parents[2])]
         return [executable]
