@@ -7,6 +7,9 @@ pour que le reste de l'appli ne change pas. Ce qu'on gagne en natif :
 - clic gauche : le popup ; clic droit ou ctrl-clic : le menu natif.
 
 Tout s'exécute dans le thread principal, celui de la boucle Tk (qui tourne sur Cocoa).
+Mais les rappels d'AppKit arrivent *pendant* que Tk traite ses événements, verrou de
+tkinter pris : y toucher à Tk ferme l'appli. Ils ne font donc que confier le travail à
+`defer` (la file que la boucle Tk vide), sans jamais appeler l'appli directement.
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ from AppKit import (
     NSScreen,
     NSStatusBar,
 )
-from Foundation import NSData, NSMakeSize, NSObject
+from Foundation import NSData, NSMakePoint, NSMakeSize, NSObject
 
 from . import render
 
@@ -64,8 +67,6 @@ class _Target(NSObject):
     def menuItem_(self, sender):
         _guard(self.owner._on_menu_item, sender.tag())
 
-    def menuNeedsUpdate_(self, menu):
-        _guard(self.owner._fill, menu, self.owner.menu)
 
 
 def _nsimage(img, size_pt: tuple[int, int], template: bool) -> NSImage:
@@ -101,9 +102,16 @@ def notify(message: str, title: str) -> None:
 class MacStatusIcon:
     """Même interface que pystray.Icon, pour ce que l'appli en utilise."""
 
-    def __init__(self, menu, on_left_click: Callable[[], None], on_outside_click: Callable[[], None]) -> None:
+    def __init__(
+        self,
+        menu,
+        on_left_click: Callable[[], None],
+        on_outside_click: Callable[[], None],
+        defer: Callable[[Callable[[], None]], None],
+    ) -> None:
         self.menu = menu  # un pystray.Menu, utilisé comme simple description
         self._on_left_click = on_left_click
+        self._defer = defer
         self._target = _Target.alloc().initWithOwner_(self)
         self.item = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
         self.button = self.item.button()
@@ -114,11 +122,10 @@ class MacStatusIcon:
         self.button.setImagePosition_(2)  # NSImageLeft : la pilule, puis le texte
         self.nsmenu = NSMenu.alloc().init()
         self.nsmenu.setAutoenablesItems_(False)
-        self.nsmenu.setDelegate_(self._target)
         self._actions: dict[int, object] = {}
         # Clic ailleurs (dans une autre appli) : on referme le popup, comme un popover natif.
         self._monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
-            LEFT_DOWN | RIGHT_DOWN, lambda _event: _guard(on_outside_click)
+            LEFT_DOWN | RIGHT_DOWN, lambda _event: _guard(defer, on_outside_click)
         )
         self.set_status(None, offline=True, tooltip="Claude Usage")
 
@@ -146,13 +153,14 @@ class MacStatusIcon:
         if right:
             self.show_menu()
         else:
-            self._on_left_click()
+            self._defer(self._on_left_click)
 
     def show_menu(self) -> None:
+        # Menu natif ouvert juste sous l'icône. Il tourne dans sa propre boucle : les
+        # actions choisies sont confiées à defer et s'exécutent une fois le menu fermé.
         self._fill(self.nsmenu, self.menu)
-        self.item.setMenu_(self.nsmenu)
-        self.button.performClick_(None)
-        self.item.setMenu_(None)  # sinon le clic gauche ouvrirait aussi le menu
+        height = self.button.bounds().size.height
+        self.nsmenu.popUpMenuPositioningItem_atLocation_inView_(None, NSMakePoint(0, height + 4), self.button)
 
     def _fill(self, nsmenu, menu) -> None:
         if nsmenu is self.nsmenu:
@@ -183,7 +191,7 @@ class MacStatusIcon:
     def _on_menu_item(self, tag: int) -> None:
         entry = self._actions.get(tag)
         if entry is not None:
-            entry(self)  # même appel que pystray : l'action reçoit l'icône
+            self._defer(lambda: entry(self))  # même appel que pystray : l'action reçoit l'icône
 
     # ------------------------------------------- compatibilité avec pystray.Icon
     def notify(self, message: str, title: str | None = None) -> None:

@@ -37,7 +37,13 @@ from .usage_client import (
 )
 
 IS_MAC = sys.platform == "darwin"
-UI_POLL_MS = 40 if IS_MAC else 100  # sur Mac, les clics sur l'icône passent aussi par la file
+UI_POLL_MS = 100
+
+# customtkinter vérifie le thème du système toutes les 30 ms et l'échelle de l'écran toutes
+# les 100 ms, en permanence : ~40 réveils par seconde pour rien (2 % de CPU au repos).
+# Le thème est déjà suivi par _watch_theme ; une vérification par seconde suffit largement.
+ctk.AppearanceModeTracker.update_loop_interval = 1000
+ctk.ScalingTracker.update_loop_interval = 1000
 
 def _same_window(a: datetime | None, b: datetime | None) -> bool:
     # resets_at peut varier de quelques secondes d'un appel à l'autre.
@@ -140,8 +146,9 @@ class TrayApp:
             # moment-là bloquerait l'appli (verrou de tkinter déjà pris). On passe par la file.
             self.icon = mac_status.MacStatusIcon(
                 self._build_menu(),
-                on_left_click=lambda: self._ui(self.popup.toggle),
-                on_outside_click=lambda: self._ui(self._outside_click),
+                on_left_click=lambda: self.popup.toggle(),
+                on_outside_click=self._outside_click,
+                defer=self._ui,
             )
             self.popup.anchor = self.icon.anchor
         else:

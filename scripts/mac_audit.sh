@@ -21,6 +21,15 @@ sleep 2
 open -n "dist/Claude Usage Tray.app" --args --demo --exit-after 45
 python scripts/mac_clicks.py "$applog" || true
 
+# CPU au repos (après les clics) : un widget ne doit presque rien consommer.
+pid=$(pgrep -f "Claude Usage Tray.app/Contents/MacOS" | head -1)
+if [ -n "$pid" ]; then
+    sleep 3
+    cpu=$(ps -p "$pid" -o %cpu= | tr -d ' ')
+    time_before=$(ps -p "$pid" -o time= | tr -d ' ')
+    echo "CPU au repos : ${cpu} % (temps CPU cumulé ${time_before})"
+fi
+
 # L'appli doit s'être fermée toute seule (--exit-after) : sinon elle est figée.
 status=0
 for _ in $(seq 1 40); do

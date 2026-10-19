@@ -12,9 +12,13 @@ from pathlib import Path
 import Quartz
 
 
-def click(x: float, y: float) -> None:
-    for kind in (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp):
-        event = Quartz.CGEventCreateMouseEvent(None, kind, (x, y), Quartz.kCGMouseButtonLeft)
+def click(x: float, y: float, right: bool = False) -> None:
+    if right:
+        kinds, button = (Quartz.kCGEventRightMouseDown, Quartz.kCGEventRightMouseUp), Quartz.kCGMouseButtonRight
+    else:
+        kinds, button = (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp), Quartz.kCGMouseButtonLeft
+    for kind in kinds:
+        event = Quartz.CGEventCreateMouseEvent(None, kind, (x, y), button)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
         time.sleep(0.05)
 
@@ -35,10 +39,18 @@ def main() -> None:
     x, bottom = anchor
     icon = (x, bottom - 11)
     print(f"Icône en {icon}")
-    for label, point in [("icône", icon), ("à côté", (400, 500)), ("icône", icon), ("icône", icon),
-                         ("à côté", (600, 600))]:
+    steps = [
+        ("icône", icon, False),          # ouvre le popup
+        ("à côté", (400, 500), False),   # le referme (c'est ce clic qui fermait la v0.7.0)
+        ("icône", icon, False),
+        ("icône", icon, False),          # ouvre puis referme
+        ("droit icône", icon, True),     # menu natif
+        ("à côté", (600, 600), False),   # ferme le menu
+        ("à côté", (300, 400), False),
+    ]
+    for label, point, right in steps:
         print(f"Clic {label} {point}")
-        click(*point)
+        click(*point, right=right)
         time.sleep(2.5)
 
 
