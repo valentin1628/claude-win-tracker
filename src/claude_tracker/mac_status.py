@@ -12,6 +12,7 @@ Tout s'exécute dans le thread principal, celui de la boucle Tk (qui tourne sur 
 from __future__ import annotations
 
 import io
+import logging
 import subprocess
 from typing import Callable
 
@@ -29,6 +30,16 @@ from AppKit import (
 from Foundation import NSData, NSMakeSize, NSObject
 
 from . import render
+
+log = logging.getLogger("claude_tracker")
+
+
+def _guard(fn: Callable, *args) -> None:
+    """Une exception Python qui remonte dans AppKit ferme l'appli : on la journalise ici."""
+    try:
+        fn(*args)
+    except Exception:
+        log.exception("Erreur dans un rappel macOS")
 
 NSVariableStatusItemLength = -1.0
 LEFT_DOWN, LEFT_UP, RIGHT_DOWN, RIGHT_UP = 1 << 1, 1 << 2, 1 << 3, 1 << 4
@@ -48,13 +59,13 @@ class _Target(NSObject):
         return self
 
     def clicked_(self, sender):
-        self.owner._on_click()
+        _guard(self.owner._on_click)
 
     def menuItem_(self, sender):
-        self.owner._on_menu_item(sender.tag())
+        _guard(self.owner._on_menu_item, sender.tag())
 
     def menuNeedsUpdate_(self, menu):
-        self.owner._fill(menu, self.owner.menu)
+        _guard(self.owner._fill, menu, self.owner.menu)
 
 
 def _nsimage(img, size_pt: tuple[int, int], template: bool) -> NSImage:
@@ -107,7 +118,7 @@ class MacStatusIcon:
         self._actions: dict[int, object] = {}
         # Clic ailleurs (dans une autre appli) : on referme le popup, comme un popover natif.
         self._monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
-            LEFT_DOWN | RIGHT_DOWN, lambda _event: on_outside_click()
+            LEFT_DOWN | RIGHT_DOWN, lambda _event: _guard(on_outside_click)
         )
         self.set_status(None, offline=True, tooltip="Claude Usage")
 

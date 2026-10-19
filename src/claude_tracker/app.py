@@ -18,6 +18,7 @@ import customtkinter as ctk
 import pystray
 
 from . import APP_NAME, __version__, autostart, hotkey, login, render, theme, updater
+from .applog import log
 from .config import Config, config_dir
 from .costs import CostSummary, CostTracker
 from .forecast import SESSION_LOOKBACK_S, WEEKLY_LOOKBACK_S, Forecast, forecast
@@ -36,6 +37,7 @@ from .usage_client import (
 )
 
 IS_MAC = sys.platform == "darwin"
+UI_POLL_MS = 40 if IS_MAC else 100  # sur Mac, les clics sur l'icône passent aussi par la file
 
 def _same_window(a: datetime | None, b: datetime | None) -> bool:
     # resets_at peut varier de quelques secondes d'un appel à l'autre.
@@ -117,6 +119,7 @@ class TrayApp:
         self.root = ctk.CTk()
         self.root.withdraw()
         self.root.title(APP_NAME)
+        self.root.report_callback_exception = lambda *exc: log.error("Erreur dans l'interface", exc_info=exc)
         self.history = history or _open_history()
         self.costs = CostTracker(self.history)
         self.cost_summary: CostSummary | None = None
@@ -133,10 +136,12 @@ class TrayApp:
             from . import mac_status
 
             mac_status.hide_from_dock()
+            # Les clics arrivent d'AppKit pendant que Tk attend un événement : appeler Tk à ce
+            # moment-là bloquerait l'appli (verrou de tkinter déjà pris). On passe par la file.
             self.icon = mac_status.MacStatusIcon(
                 self._build_menu(),
-                on_left_click=lambda: self.root.after(0, self.popup.toggle),
-                on_outside_click=self._outside_click,
+                on_left_click=lambda: self._ui(self.popup.toggle),
+                on_outside_click=lambda: self._ui(self._outside_click),
             )
             self.popup.anchor = self.icon.anchor
         else:
@@ -255,9 +260,12 @@ class TrayApp:
                 fn = self._ui_queue.get_nowait()
             except queue.Empty:
                 break
-            fn()
+            try:
+                fn()
+            except Exception:  # une erreur ne doit pas figer toute l'interface
+                log.exception("Erreur dans l'interface")
         # Toujours replanifié : root.quit() peut arriver après _stop.set().
-        self.root.after(100, self._drain_ui_queue)
+        self.root.after(UI_POLL_MS, self._drain_ui_queue)
 
     def request_refresh(self) -> None:
         self._wake.set()
