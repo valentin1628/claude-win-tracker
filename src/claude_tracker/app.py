@@ -16,12 +16,13 @@ from typing import Callable, Protocol
 import customtkinter as ctk
 import pystray
 
-from . import APP_NAME, __version__, autostart, login, render, updater
+from . import APP_NAME, __version__, autostart, hotkey, login, render, theme, updater
 from .config import Config, config_dir
 from .costs import CostSummary, CostTracker
 from .forecast import SESSION_LOOKBACK_S, WEEKLY_LOOKBACK_S, Forecast, forecast
 from .formatting import forecast_text, reset_clock, tooltip
 from .history import History
+from .minibar import MiniBar
 from .popup import UsagePopup
 from .usage_client import (
     CredentialsNotFound,
@@ -109,7 +110,8 @@ class TrayApp:
         self._stop = threading.Event()
         self._wake = threading.Event()
 
-        ctk.set_appearance_mode("dark")
+        self._taskbar_light = False
+        self._apply_theme(rebuild=False)
         self.root = ctk.CTk()
         self.root.withdraw()
         self.root.title(APP_NAME)
@@ -118,13 +120,11 @@ class TrayApp:
         self.cost_summary: CostSummary | None = None
         self.forecasts: dict[str, Forecast | None] = {}
         self._forecast_notified: dict[str, datetime | None] = {}
-        self.popup = UsagePopup(
-            self.root,
-            on_refresh=self.request_refresh,
-            on_login=self.open_login,
-            on_details=self._set_details_open,
-            details_open=config.details_open,
-        )
+        self.popup = self._make_popup()
+        self.minibar = MiniBar(self.root)
+        self.hotkey: hotkey.GlobalHotkey | None = None
+        self.settings_window = None
+        self._update_thread: threading.Thread | None = None
 
         self.icon = pystray.Icon(
             "claude_usage", icon=render.tray_icon(None), title=tooltip(None), menu=self._build_menu()
@@ -147,6 +147,7 @@ class TrayApp:
                 "Se reconnecter à Claude…", self.open_login, visible=lambda _item: self.auth_error
             ),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Réglages…", lambda: self._ui(self.open_settings)),
             pystray.MenuItem("L'icône affiche", pystray.Menu(*(metric_item(k) for k in METRIC_LABELS))),
             pystray.MenuItem("Notifications", self._notifications_menu()),
             pystray.MenuItem(
@@ -410,8 +411,11 @@ class TrayApp:
         return values.get(self.config.icon_metric)
 
     def _apply_state(self) -> None:
+        if self._stop.is_set():
+            return  # en cours de fermeture : l'icône est peut-être déjà arrêtée
         offline = self.error is not None
-        self.icon.icon = render.tray_icon(self._icon_value(), offline=offline)
+        self.icon.icon = render.tray_icon(self._icon_value(), offline=offline, light_taskbar=self._taskbar_light)
+        self.minibar.set_value(self._icon_value(), offline)
         self.icon.title = tooltip(self.snapshot, self.error)
         self.popup.update_state(self.snapshot, self.error, show_login=self.auth_error, notice=self.notice)
         self.popup.update_extras(
@@ -510,12 +514,119 @@ class TrayApp:
                 self.icon.notify(threshold_message(window, max(crossed)), APP_NAME)
 
     # --------------------------------------------------------- cycle de vie
+    # ------------------------------------------------------------ v0.6
+    def _make_popup(self) -> UsagePopup:
+        return UsagePopup(
+            self.root,
+            on_refresh=self.request_refresh,
+            on_login=self.open_login,
+            on_details=self._set_details_open,
+            details_open=self.config.details_open,
+        )
+
+    def _apply_theme(self, rebuild: bool = True) -> None:
+        """Palette du popup (réglage ou thème des applis Windows) et encre de l'icône (barre des tâches)."""
+        name = theme.resolve(self.config.theme)
+        self._taskbar_light = theme.taskbar_light()
+        changed = name != render.current_theme
+        render.set_theme(name)
+        ctk.set_appearance_mode(name)
+        if changed and rebuild:
+            # Le popup fige ses couleurs à la construction : on le reconstruit.
+            was_visible = self.popup.winfo_viewable()
+            self.popup.destroy()
+            self.popup = self._make_popup()
+            if was_visible:
+                self.popup.show()
+        if rebuild:
+            self._apply_state()
+
+    def _watch_theme(self) -> None:
+        # En mode « auto », on suit les changements de thème Windows (vérifié toutes les 30 s).
+        if self.config.theme == "auto":
+            before = (render.current_theme, self._taskbar_light)
+            if (theme.resolve("auto"), theme.taskbar_light()) != before:
+                self._apply_theme()
+        self.root.after(30_000, self._watch_theme)
+
+    def _restart_hotkey(self) -> None:
+        if self.hotkey:
+            self.hotkey.stop()
+            self.hotkey = None
+        if not (self.config.hotkey_enabled and hotkey.supported()):
+            return
+        try:
+            hk = hotkey.GlobalHotkey(self.config.hotkey, lambda: self._ui(self.popup.toggle))
+            ok = hk.start()
+        except hotkey.HotkeyError as exc:
+            self.icon.notify(f"Raccourci invalide : {exc}", APP_NAME)
+            return
+        if ok:
+            self.hotkey = hk
+        else:
+            self.icon.notify(hk.error or "Raccourci indisponible", APP_NAME)
+
+    def _start_update_loop(self) -> None:
+        if self._update_thread and self._update_thread.is_alive():
+            return
+        if self.config.check_updates and updater.updates_supported():
+            self._update_thread = threading.Thread(target=self._update_loop, name="update-check", daemon=True)
+            self._update_thread.start()
+
+    def open_settings(self) -> None:
+        from .diagnose import run as run_diagnostic
+        from .settings_window import SettingsWindow
+
+        if self.settings_window is not None and self.settings_window.winfo_exists():
+            self.settings_window.deiconify()
+            self.settings_window.lift()
+            self.settings_window.focus_force()
+            return
+        self.settings_window = SettingsWindow(
+            self.root,
+            self.config,
+            on_change=self._setting_changed,
+            post_ui=self._ui,
+            test_notification=self._test_notification,
+            check_updates=self._check_updates_now,
+            run_diagnostic=run_diagnostic,
+        )
+
+    def _setting_changed(self, attr: str) -> None:
+        if attr == "theme":
+            self._apply_theme()
+        elif attr in ("hotkey", "hotkey_enabled"):
+            self._restart_hotkey()
+        elif attr == "minibar":
+            self.minibar.enable(self.config.minibar)
+        elif attr == "auto_refresh_token" and isinstance(self.fetcher, UsageClient):
+            self.fetcher.auto_refresh_token = self.config.auto_refresh_token
+        elif attr == "check_updates":
+            self._start_update_loop()
+        self.icon.update_menu()
+        self._apply_state()
+
+    def _announce_version(self) -> None:
+        """Après une mise à jour (ou à la première installation) : une notification de confirmation."""
+        previous = self.config.last_version
+        if previous == __version__:
+            return
+        if previous:
+            self.icon.notify(f"Mise à jour installée : v{__version__} ✓", APP_NAME)
+        else:
+            self.icon.notify(f"Claude Usage Tray v{__version__} est installé et prêt ✓", APP_NAME)
+        self.config.last_version = __version__
+        self.config.save()
+
     def run(self) -> None:
         self.icon.run_detached()
         threading.Thread(target=self._poll_loop, name="usage-poll", daemon=True).start()
         threading.Thread(target=self._cost_loop, name="cost-scan", daemon=True).start()
-        if self.config.check_updates and updater.updates_supported():
-            threading.Thread(target=self._update_loop, name="update-check", daemon=True).start()
+        self._start_update_loop()
+        self._restart_hotkey()
+        self.minibar.enable(self.config.minibar)
+        self.root.after(30_000, self._watch_theme)
+        self.root.after(3000, self._announce_version)
         self.root.after(100, self._drain_ui_queue)
         self.root.mainloop()
 
@@ -523,5 +634,8 @@ class TrayApp:
         self._stop.set()
         self._wake.set()
         self._update_wake.set()
-        self.icon.stop()
+        if self.hotkey:
+            self.hotkey.stop()
+        # Dans un thread à part : icon.stop() peut attendre son propre thread, jamais la boucle Tk.
+        threading.Thread(target=self.icon.stop, name="tray-stop", daemon=True).start()
         self._ui(self.root.quit)

@@ -72,6 +72,7 @@ C'est tout. La connexion de Claude Code expire toutes les quelques heures (et ap
 
 **Clic droit** : le menu, avec :
 - **Rafraîchir** : met à jour les chiffres tout de suite. Sinon, ils se mettent à jour seuls toutes les 5 minutes.
+- **Réglages…** : la fenêtre où tout se règle (voir plus bas).
 - **L'icône affiche** : choisir ce que montre l'icône (la session, la semaine, ou la plus haute des deux).
 - **Notifications** : voir plus bas.
 - **Lancer au démarrage** : pour que l'appli se lance avec Windows.
@@ -116,9 +117,26 @@ Tu n'es prévenu qu'une fois par palier, au moment où tu le dépasses.
 
 ---
 
+## Réglages
+
+**Clic droit → Réglages…** ouvre une fenêtre avec quatre onglets :
+- **Général** : fréquence d'actualisation, ce que montre l'icône, thème (Auto, Sombre ou Clair), lancement au démarrage, raccourci clavier et mini-barre.
+- **Notifications** : les mêmes options que dans le menu, en plus lisible.
+- **Connexion** : le renouvellement automatique de la connexion, et un bouton **Tester la connexion** qui affiche le diagnostic.
+- **Mises à jour** : ta version, et la recherche des mises à jour.
+
+<p align="center"><img src="docs/settings.png" alt="La fenêtre de réglages" width="380"></p>
+
+Quelques précisions :
+- **Thème** : en « Auto », l'appli suit le mode clair ou sombre de Windows (Paramètres → Personnalisation → Couleurs). Le chiffre de l'icône s'adapte aussi à la couleur de la barre des tâches.
+- **Raccourci clavier** : `Ctrl+Alt+C` par défaut ouvre ou ferme la fenêtre depuis n'importe où. Tu peux le changer (par exemple `Ctrl+Shift+U` ou `Win+F9`). Si une autre appli l'utilise déjà, une notification te prévient.
+- **Mini-barre** : un trait de couleur de 3 pixels, collé au-dessus de la barre des tâches, qui se remplit avec ton pourcentage. Les clics passent au travers, et elle se cache pendant les jeux et vidéos en plein écran.
+
+---
+
 ## Mises à jour
 
-Tu n'as rien à faire. L'appli vérifie toute seule s'il existe une nouvelle version. Si oui, une notification apparaît. Fais **clic droit → Installer la mise à jour** : elle se télécharge, s'installe et l'appli redémarre.
+Tu n'as rien à faire. L'appli vérifie toute seule s'il existe une nouvelle version. Si oui, une notification apparaît. Fais **clic droit → Installer la mise à jour** : elle se télécharge, s'installe et l'appli redémarre. Une notification « Mise à jour installée : vX ✓ » confirme que tout s'est bien passé.
 
 Tu peux aussi vérifier à la main avec **clic droit → Rechercher les mises à jour**.
 
@@ -157,7 +175,7 @@ Paramètres Windows → Applications → **Claude Usage Tray** → Désinstaller
 
 ## Réglages avancés
 
-Tous les réglages sont dans le fichier `%APPDATA%\ClaudeTracker\config.json`. Pour l'ouvrir, colle ce chemin dans la barre d'adresse de l'Explorateur de fichiers. La plupart se changent depuis le menu de l'icône, donc tu n'as normalement pas besoin d'y toucher.
+Tous les réglages sont dans le fichier `%APPDATA%\ClaudeTracker\config.json`. Pour l'ouvrir, colle ce chemin dans la barre d'adresse de l'Explorateur de fichiers. Tout se change depuis la fenêtre **Réglages**, donc tu n'as normalement pas besoin d'y toucher.
 
 | Réglage | À quoi ça sert | Par défaut |
 |---|---|---|
@@ -170,6 +188,9 @@ Tous les réglages sont dans le fichier `%APPDATA%\ClaudeTracker\config.json`. P
 | `notify_forecast` | Notifier quand la prévision annonce la limite bientôt | `false` |
 | `auto_refresh_token` | L'appli renouvelle elle-même la connexion quand elle expire | `true` |
 | `check_updates` | Rechercher les mises à jour | `true` |
+| `theme` | `auto` (suit Windows), `dark` ou `light` | `auto` |
+| `hotkey_enabled` / `hotkey` | Raccourci clavier global | `true` / `Ctrl+Alt+C` |
+| `minibar` | Mini-barre au-dessus de la barre des tâches | `false` |
 
 Après une modification, redémarre l'appli. Les mises à jour ne touchent pas à ce fichier.
 
@@ -197,6 +218,10 @@ src/claude_tracker/
 ├─ history.py        historique local (SQLite)
 ├─ forecast.py       prévision du rythme
 ├─ costs.py          coût équivalent API (journaux de Claude Code)
+├─ settings_window.py  fenêtre de réglages
+├─ theme.py          thème clair / sombre (registre Windows)
+├─ hotkey.py         raccourci clavier global
+├─ minibar.py        mini-barre
 ├─ diagnose.py       diagnostic (--check)
 └─ autostart.py      lancement au démarrage
 installer/ClaudeTracker.iss     installeur (Inno Setup)

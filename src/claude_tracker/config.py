@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 ICON_METRICS = ("five_hour", "seven_day", "max")
+THEMES = ("auto", "dark", "light")
 MIN_POLL_SECONDS = 60
 CONFIG_VERSION = 3
 
@@ -31,12 +32,19 @@ class Config:
     auto_refresh_token: bool = True  # comme Claude Code : renouvelle le jeton expiré en silence
     check_updates: bool = True
     details_open: bool = False
+    theme: str = "auto"  # auto (suit Windows) | dark | light
+    hotkey_enabled: bool = True
+    hotkey: str = "Ctrl+Alt+C"
+    minibar: bool = False
+    last_version: str = ""  # pour la notification « mise à jour installée »
     config_version: int = CONFIG_VERSION
 
     def normalized(self) -> "Config":
         self.poll_seconds = max(MIN_POLL_SECONDS, int(self.poll_seconds))
         if self.icon_metric not in ICON_METRICS:
             self.icon_metric = "five_hour"
+        if self.theme not in THEMES:
+            self.theme = "auto"
         self.notify_thresholds = tuple(sorted({int(t) for t in self.notify_thresholds if 0 < int(t) <= 100}))
         return self
 

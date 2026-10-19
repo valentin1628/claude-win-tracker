@@ -72,7 +72,7 @@ def test_missing_projects_dir(tmp_path):
 
 def test_texts():
     assert money(1234.5) == "1 234,50 $"
-    assert "calcul en cours" in cost_text(None)
+    assert "Calcul en cours" in cost_text(None)
     s = costs.CostSummary(today=1.1, month=23.4, unknown_tokens=0, messages=10)
     assert cost_text(s) == "Aujourd'hui : 1,10 $   ·   Ce mois : 23,40 $"
 
