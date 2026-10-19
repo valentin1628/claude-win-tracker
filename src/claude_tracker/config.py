@@ -9,7 +9,7 @@ from pathlib import Path
 
 ICON_METRICS = ("five_hour", "seven_day", "max")
 MIN_POLL_SECONDS = 60
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
 
 
 def config_dir() -> Path:
@@ -20,7 +20,7 @@ def config_dir() -> Path:
 
 @dataclass
 class Config:
-    poll_seconds: int = 120
+    poll_seconds: int = 300  # plus souvent, Anthropic répond « trop de requêtes » (429)
     icon_metric: str = "five_hour"  # five_hour | seven_day | max
     notifications_enabled: bool = True
     notify_thresholds: tuple[int, ...] = (80, 95)
@@ -51,6 +51,9 @@ class Config:
             # Avant la v0.4.0, save() écrivait "auto_refresh_token": false (l'ancien défaut)
             # même si on ne l'avait jamais choisi : on l'ignore pour profiter du nouveau défaut.
             data.pop("auto_refresh_token", None)
+        if data.get("config_version", 1) < 3 and data.get("poll_seconds") == 120:
+            # 120 s était l'ancien défaut, trop fréquent pour Anthropic : on passe au nouveau.
+            data.pop("poll_seconds")
         data["config_version"] = CONFIG_VERSION
         known = {f.name for f in fields(cls)}
         try:

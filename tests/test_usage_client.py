@@ -30,9 +30,10 @@ def write_creds(tmp_path, expires_in_s=3600, **extra):
 
 
 class FakeResponse:
-    def __init__(self, status=200, payload=None):
+    def __init__(self, status=200, payload=None, headers=None):
         self.status_code = status
         self._payload = payload
+        self.headers = headers or {}
 
     @property
     def ok(self):
@@ -240,3 +241,11 @@ def test_old_config_false_is_migrated_but_new_false_is_kept(tmp_path):
     loaded.auto_refresh_token = False
     loaded.save(cfg)  # choix explicite en v0.4.0
     assert Config.load(cfg).auto_refresh_token is False
+
+
+def test_429_raises_rate_limited_with_retry_after(tmp_path, monkeypatch):
+    client = uc.UsageClient(credentials_path=write_creds(tmp_path))
+    monkeypatch.setattr(client.session, "get", lambda *a, **k: FakeResponse(429, {}, {"Retry-After": "600"}))
+    with pytest.raises(uc.RateLimited) as err:
+        client.fetch()
+    assert err.value.retry_after == 600

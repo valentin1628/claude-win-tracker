@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import queue
 import threading
-from datetime import datetime
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Protocol
 
 import customtkinter as ctk
@@ -18,7 +19,15 @@ from . import APP_NAME, __version__, autostart, login, render, updater
 from .config import Config
 from .formatting import reset_clock, tooltip
 from .popup import UsagePopup
-from .usage_client import CredentialsNotFound, NetworkError, TokenExpired, UsageClient, UsageError, UsageSnapshot
+from .usage_client import (
+    CredentialsNotFound,
+    NetworkError,
+    RateLimited,
+    TokenExpired,
+    UsageClient,
+    UsageError,
+    UsageSnapshot,
+)
 
 
 def _same_window(a: datetime | None, b: datetime | None) -> bool:
@@ -26,6 +35,10 @@ def _same_window(a: datetime | None, b: datetime | None) -> bool:
     if a is None or b is None:
         return a is b
     return abs((a - b).total_seconds()) < 600
+
+
+def _age_s(snapshot: UsageSnapshot) -> float:
+    return (datetime.now(timezone.utc) - snapshot.fetched_at).total_seconds()
 
 
 def threshold_message(window, threshold: int) -> str:
@@ -44,6 +57,13 @@ METRIC_LABELS = {"five_hour": "Session 5h", "seven_day": "Semaine", "max": "Le p
 THRESHOLD_CHOICES = (50, 75, 80, 90, 95, 100)
 # Après une coupure réseau (ex. juste après le démarrage de Windows) : nouveaux essais rapprochés.
 NETWORK_RETRY_DELAYS = (15, 30)
+# Quand Anthropic répond 429 : on attend de plus en plus longtemps (5, 10, 20 puis 30 min max).
+RATE_LIMIT_BASE_S = 300
+RATE_LIMIT_MAX_S = 1800
+# Tant que les derniers chiffres ont moins de 30 min, un 429 n'est pas affiché comme une panne.
+STALE_AFTER_S = 1800
+# Clics trop rapprochés sur « Rafraîchir » : ignorés pour ne pas déclencher de 429.
+MIN_MANUAL_INTERVAL_S = 30
 RECHARGE_MIN_PCT = 50  # « session rechargée » seulement si on l'avait bien entamée
 
 
@@ -62,6 +82,13 @@ class TrayApp:
         self._update_wake = threading.Event()
         self._installing = False
         self._manual_check = False
+
+        self.notice: str | None = None  # info discrète (ex. limite d'Anthropic), sans griser l'icône
+        self._net_failures = 0
+        self._rate_strikes = 0
+        self._retry_after: float | None = None
+        self._last_fetch = 0.0
+        self._next_fetch_at = 0.0
 
         self._ui_queue: queue.Queue[Callable[[], None]] = queue.Queue()
         self._stop = threading.Event()
@@ -190,33 +217,59 @@ class TrayApp:
         self._wake.set()
 
     def _poll_loop(self) -> None:
-        network_failures = 0
         while not self._stop.is_set():
-            network_failures = self._poll_once(network_failures)
-            self._wake.wait(self.next_delay(network_failures))
-            self._wake.clear()
+            self._poll_once()
+            self._next_fetch_at = time.monotonic() + self.next_delay()
+            while not self._stop.is_set():
+                manual = self._wake.wait(max(0.0, self._next_fetch_at - time.monotonic()))
+                self._wake.clear()
+                if not manual or self._manual_refresh_allowed():
+                    break
+                # Clic sur « Rafraîchir » pendant une attente imposée : on n'appelle pas le serveur.
+                self._ui(self._apply_state)
 
-    def _poll_once(self, network_failures: int) -> int:
-        """Un relevé. Renvoie le nombre d'erreurs réseau consécutives."""
+    def _manual_refresh_allowed(self) -> bool:
+        now = time.monotonic()
+        if self._rate_strikes and now < self._next_fetch_at:
+            return False
+        return now - self._last_fetch >= MIN_MANUAL_INTERVAL_S
+
+    def _poll_once(self) -> None:
+        """Un relevé : met à jour les compteurs d'erreurs qui fixent le délai suivant."""
+        self._last_fetch = time.monotonic()
         try:
             snapshot = self.fetcher.fetch()
+        except RateLimited as exc:
+            self._net_failures = 0
+            self._rate_strikes += 1
+            self._retry_after = exc.retry_after
+            self._ui(self._on_rate_limited)
+            return
+        except NetworkError as exc:
+            self._net_failures += 1
+            self._ui(lambda msg=str(exc): self._on_error(msg))
+            return
         except (TokenExpired, CredentialsNotFound) as exc:
             self._ui(lambda msg=str(exc): self._on_error(msg, auth=True))
-        except NetworkError as exc:
-            self._ui(lambda msg=str(exc): self._on_error(msg))
-            return network_failures + 1
         except UsageError as exc:
             self._ui(lambda msg=str(exc): self._on_error(msg))
         except Exception as exc:  # ne jamais tuer le thread de polling
             self._ui(lambda msg=f"Erreur inattendue : {exc}": self._on_error(msg))
         else:
             self._ui(lambda s=snapshot: self._on_snapshot(s))
-        return 0
+        self._net_failures = self._rate_strikes = 0
+        self._retry_after = None
 
-    def next_delay(self, network_failures: int) -> float:
-        if 0 < network_failures <= len(NETWORK_RETRY_DELAYS):
-            return min(NETWORK_RETRY_DELAYS[network_failures - 1], self.config.poll_seconds)
-        return self.config.poll_seconds
+    def next_delay(self) -> float:
+        poll = self.config.poll_seconds
+        if self._rate_strikes:
+            backoff = min(RATE_LIMIT_BASE_S * 2 ** (self._rate_strikes - 1), RATE_LIMIT_MAX_S)
+            if self._retry_after is not None:
+                backoff = max(backoff, min(self._retry_after, 3600))
+            return max(backoff, poll)
+        if 0 < self._net_failures <= len(NETWORK_RETRY_DELAYS):
+            return min(NETWORK_RETRY_DELAYS[self._net_failures - 1], poll)
+        return poll
 
     # ------------------------------------------------------ mises à jour
     UPDATE_FIRST_DELAY = 30
@@ -290,13 +343,23 @@ class TrayApp:
 
     # ------------------------------------------------------------- état
     def _on_snapshot(self, snapshot: UsageSnapshot) -> None:
-        self.snapshot, self.error, self.auth_error = snapshot, None, False
+        self.snapshot, self.error, self.auth_error, self.notice = snapshot, None, False, None
         self.icon.update_menu()
         self._apply_state()
         self._maybe_notify(snapshot)
 
+    def _on_rate_limited(self) -> None:
+        retry_at = datetime.now() + timedelta(seconds=self.next_delay())
+        note = f"Anthropic limite les actualisations, prochain essai à {retry_at:%H:%M}"
+        if self.snapshot and _age_s(self.snapshot) < STALE_AFTER_S:
+            # Les chiffres affichés sont encore récents : simple information, pas de panne.
+            self.notice = note
+            self._apply_state()
+        else:
+            self._on_error(note)
+
     def _on_error(self, message: str, auth: bool = False) -> None:
-        self.error, self.auth_error = message, auth
+        self.error, self.auth_error, self.notice = message, auth, None
         self.icon.update_menu()
         self._apply_state()
 
@@ -317,7 +380,7 @@ class TrayApp:
         offline = self.error is not None
         self.icon.icon = render.tray_icon(self._icon_value(), offline=offline)
         self.icon.title = tooltip(self.snapshot, self.error)
-        self.popup.update_state(self.snapshot, self.error, show_login=self.auth_error)
+        self.popup.update_state(self.snapshot, self.error, show_login=self.auth_error, notice=self.notice)
 
     def _maybe_notify(self, snapshot: UsageSnapshot) -> None:
         """Notifie quand un palier est franchi entre deux relevés (et au rechargement).

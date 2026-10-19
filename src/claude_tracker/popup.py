@@ -96,6 +96,7 @@ class UsagePopup(ctk.CTkToplevel):
         self._on_refresh = on_refresh
         self._on_login = on_login
         self._snapshot: UsageSnapshot | None = None
+        self._notice: str | None = None
         self._hidden_at = 0.0
         self._tick_job: str | None = None
 
@@ -145,15 +146,22 @@ class UsagePopup(ctk.CTkToplevel):
         )
 
         # Pied de page
-        self.footer = ctk.CTkLabel(body, text="", text_color=render.TEXT_MUTED, font=ctk.CTkFont(size=11))
+        self.footer = ctk.CTkLabel(body, text="", text_color=render.TEXT_MUTED, font=ctk.CTkFont(size=11), wraplength=300)
         self.footer.pack(fill="x", pady=(10, 0))
 
         self.bind("<FocusOut>", self._focus_out)
         self.bind("<Escape>", lambda _e: self.hide())
 
     # ------------------------------------------------------------------ état
-    def update_state(self, snapshot: UsageSnapshot | None, error: str | None, show_login: bool = False) -> None:
+    def update_state(
+        self,
+        snapshot: UsageSnapshot | None,
+        error: str | None,
+        show_login: bool = False,
+        notice: str | None = None,
+    ) -> None:
         self._snapshot = snapshot
+        self._notice = notice
         offline = error is not None
         self.plan_label.configure(text=plan_label(snapshot.plan if snapshot else None))
         if snapshot and snapshot.demo:
@@ -188,7 +196,10 @@ class UsagePopup(ctk.CTkToplevel):
         self._update_footer()
 
     def _update_footer(self) -> None:
-        self.footer.configure(text=ago_text(self._snapshot.fetched_at if self._snapshot else None))
+        text = ago_text(self._snapshot.fetched_at if self._snapshot else None)
+        if self._notice:
+            text += f"\n{self._notice}"
+        self.footer.configure(text=text)
 
     def _tick(self) -> None:
         # Rafraîchit les comptes à rebours tant que la fenêtre est visible.

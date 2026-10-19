@@ -71,7 +71,7 @@ C'est tout. La connexion de Claude Code expire toutes les quelques heures (et ap
 **Clic gauche** : ouvre la petite fenêtre avec deux jauges, la session 5 h et la semaine, et l'heure à laquelle chacune se recharge. Clique ailleurs pour la fermer.
 
 **Clic droit** : le menu, avec :
-- **Rafraîchir** : met à jour les chiffres tout de suite. Sinon, ils se mettent à jour seuls toutes les 2 minutes.
+- **Rafraîchir** : met à jour les chiffres tout de suite. Sinon, ils se mettent à jour seuls toutes les 5 minutes.
 - **L'icône affiche** : choisir ce que montre l'icône (la session, la semaine, ou la plus haute des deux).
 - **Notifications** : voir plus bas.
 - **Lancer au démarrage** : pour que l'appli se lance avec Windows.
@@ -122,7 +122,10 @@ Dans le menu Démarrer, lance **Claude Usage Tray - diagnostic**. Une fenêtre v
 Certains réseaux d'entreprise filtrent les connexions sécurisées. Le diagnostic te le dira avec une « erreur SSL ». Dans ce cas, il faut voir avec ton service informatique.
 
 **Les chiffres ne sont pas les mêmes que sur claude.ai.**
-L'appli se met à jour toutes les 2 minutes. Fais clic droit → Rafraîchir. Ce sont les mêmes chiffres que la commande `/usage` dans Claude Code.
+L'appli se met à jour toutes les 5 minutes. Fais clic droit → Rafraîchir. Ce sont les mêmes chiffres que la commande `/usage` dans Claude Code.
+
+**La fenêtre dit « Anthropic limite les actualisations ».**
+Ce n'est pas une panne. Anthropic n'accepte qu'un certain nombre de demandes de chiffres dans un temps donné. Quand on dépasse, l'appli patiente toute seule (5 minutes, puis plus longtemps si ça se répète) et garde les derniers chiffres affichés. L'heure du prochain essai est indiquée en bas de la fenêtre. Pendant ce temps, le bouton Rafraîchir ne fait rien, pour ne pas aggraver le blocage. Si tu utilises aussi d'autres outils qui affichent ta consommation Claude, ils comptent dans la même limite.
 
 ---
 
@@ -138,7 +141,7 @@ Tous les réglages sont dans le fichier `%APPDATA%\ClaudeTracker\config.json`. P
 
 | Réglage | À quoi ça sert | Par défaut |
 |---|---|---|
-| `poll_seconds` | Toutes les combien de secondes les chiffres sont mis à jour (minimum 60) | `120` |
+| `poll_seconds` | Toutes les combien de secondes les chiffres sont mis à jour (minimum 60, mais en dessous de 300 Anthropic risque de bloquer) | `300` |
 | `icon_metric` | Ce que montre l'icône : `five_hour` (session), `seven_day` (semaine) ou `max` | `five_hour` |
 | `notifications_enabled` | Notifications activées | `true` |
 | `notify_thresholds` | Paliers des notifications, en % | `[80, 95]` |
