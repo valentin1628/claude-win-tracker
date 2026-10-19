@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import queue
 import sqlite3
+import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -34,6 +35,7 @@ from .usage_client import (
     UsageSnapshot,
 )
 
+IS_MAC = sys.platform == "darwin"
 
 def _same_window(a: datetime | None, b: datetime | None) -> bool:
     # resets_at peut varier de quelques secondes d'un appel à l'autre.
@@ -126,9 +128,25 @@ class TrayApp:
         self.settings_window = None
         self._update_thread: threading.Thread | None = None
 
-        self.icon = pystray.Icon(
-            "claude_usage", icon=render.tray_icon(None), title=tooltip(None), menu=self._build_menu()
-        )
+        if IS_MAC:
+            # Barre de menus : icône native (pystray voudrait sa propre boucle dans le thread principal).
+            from . import mac_status
+
+            mac_status.hide_from_dock()
+            self.icon = mac_status.MacStatusIcon(
+                self._build_menu(),
+                on_left_click=lambda: self.root.after(0, self.popup.toggle),
+                on_outside_click=self._outside_click,
+            )
+            self.popup.anchor = self.icon.anchor
+        else:
+            self.icon = pystray.Icon(
+                "claude_usage", icon=render.tray_icon(None), title=tooltip(None), menu=self._build_menu()
+            )
+
+    def _outside_click(self) -> None:
+        if self.popup.winfo_viewable():
+            self.popup.hide()
 
     # ------------------------------------------------------------- menu
     def _build_menu(self) -> pystray.Menu:
@@ -343,6 +361,9 @@ class TrayApp:
                 self._installing = False
                 self.icon.notify(f"Mise à jour impossible : {exc}", APP_NAME)
                 return
+            if IS_MAC:
+                # On ferme l'appli pour que le Finder puisse la remplacer.
+                self.icon.notify("Glisse l'appli dans Applications (Remplacer), puis relance-la.", APP_NAME)
             # L'installeur remplace les fichiers puis relance l'appli.
             self.quit()
 
@@ -350,13 +371,13 @@ class TrayApp:
 
     # ------------------------------------------------------- connexion
     def open_login(self) -> None:
-        """Ouvre un PowerShell avec Claude Code, puis rafraîchit quand il est fermé."""
+        """Ouvre une console avec Claude Code, puis rafraîchit quand c'est fini."""
         if self._login_running:
             return
         try:
             proc = login.open_login_console()
         except OSError as exc:
-            self.icon.notify(f"Impossible d'ouvrir PowerShell : {exc}", APP_NAME)
+            self.icon.notify(f"Impossible d'ouvrir le terminal : {exc}", APP_NAME)
             return
         if proc is None:
             return
@@ -364,6 +385,13 @@ class TrayApp:
 
         def wait() -> None:
             proc.wait()
+            if IS_MAC:
+                # osascript rend la main tout de suite : on laisse le temps de se connecter,
+                # puis on réessaie à intervalles (le refresh manuel est limité à 1 / 30 s).
+                for _ in range(10):
+                    if self._stop.wait(30) or not self.auth_error:
+                        break
+                    self.request_refresh()
             self._login_running = False
             self.request_refresh()
 
@@ -414,9 +442,12 @@ class TrayApp:
         if self._stop.is_set():
             return  # en cours de fermeture : l'icône est peut-être déjà arrêtée
         offline = self.error is not None
-        self.icon.icon = render.tray_icon(self._icon_value(), offline=offline, light_taskbar=self._taskbar_light)
+        if IS_MAC:
+            self.icon.set_status(self._icon_value(), offline, tooltip(self.snapshot, self.error))
+        else:
+            self.icon.icon = render.tray_icon(self._icon_value(), offline=offline, light_taskbar=self._taskbar_light)
+            self.icon.title = tooltip(self.snapshot, self.error)
         self.minibar.set_value(self._icon_value(), offline)
-        self.icon.title = tooltip(self.snapshot, self.error)
         self.popup.update_state(self.snapshot, self.error, show_login=self.auth_error, notice=self.notice)
         self.popup.update_extras(
             {k: forecast_text(fc) for k, fc in self.forecasts.items()},
@@ -516,13 +547,17 @@ class TrayApp:
     # --------------------------------------------------------- cycle de vie
     # ------------------------------------------------------------ v0.6
     def _make_popup(self) -> UsagePopup:
-        return UsagePopup(
+        popup = UsagePopup(
             self.root,
             on_refresh=self.request_refresh,
             on_login=self.open_login,
             on_details=self._set_details_open,
             details_open=self.config.details_open,
         )
+        icon = getattr(self, "icon", None)
+        if IS_MAC and icon is not None:
+            popup.anchor = icon.anchor
+        return popup
 
     def _apply_theme(self, rebuild: bool = True) -> None:
         """Palette du popup (réglage ou thème des applis Windows) et encre de l'icône (barre des tâches)."""
@@ -624,7 +659,7 @@ class TrayApp:
         threading.Thread(target=self._cost_loop, name="cost-scan", daemon=True).start()
         self._start_update_loop()
         self._restart_hotkey()
-        self.minibar.enable(self.config.minibar)
+        self.minibar.enable(self.config.minibar and not IS_MAC)
         self.root.after(30_000, self._watch_theme)
         self.root.after(3000, self._announce_version)
         self.root.after(100, self._drain_ui_queue)
@@ -636,6 +671,9 @@ class TrayApp:
         self._update_wake.set()
         if self.hotkey:
             self.hotkey.stop()
-        # Dans un thread à part : icon.stop() peut attendre son propre thread, jamais la boucle Tk.
-        threading.Thread(target=self.icon.stop, name="tray-stop", daemon=True).start()
+        if IS_MAC:
+            self._ui(self.icon.stop)  # AppKit : uniquement depuis le thread principal
+        else:
+            # Dans un thread à part : icon.stop() peut attendre son propre thread, jamais la boucle Tk.
+            threading.Thread(target=self.icon.stop, name="tray-stop", daemon=True).start()
         self._ui(self.root.quit)

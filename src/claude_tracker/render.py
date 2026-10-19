@@ -130,6 +130,38 @@ def tray_icon(pct: float | None, size: int = 64, offline: bool = False, light_ta
     return img.resize((size, size), Image.LANCZOS)
 
 
+MENUBAR_PT = (9, 16)  # taille de la pilule dans la barre de menus macOS, en points
+MENUBAR_RED = "#FF453A"  # rouge système macOS
+
+
+def menubar_icon(pct: float | None, offline: bool = False, scale: int = 2) -> tuple[Image.Image, bool]:
+    """Pilule verticale pour la barre de menus macOS, remplie de bas en haut.
+
+    Renvoie (image, template). En « template » (noir + transparence), macOS colore
+    l'icône lui-même selon le fond, comme ses icônes système ; à partir de 85 %
+    elle passe en rouge (non template), comme la batterie faible.
+    """
+    k = SUPERSAMPLE * scale
+    w, h = MENUBAR_PT[0] * k, MENUBAR_PT[1] * k
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    critical = pct is not None and pct >= 85 and not offline
+    ink = _hex_to_rgba(MENUBAR_RED) if critical else (0, 0, 0, 255)
+    stroke = max(1, int(1.15 * k))
+    radius = w / 2
+    d.rounded_rectangle((stroke / 2, stroke / 2, w - stroke / 2 - 1, h - stroke / 2 - 1), radius=radius,
+                        outline=ink if not offline else (0, 0, 0, 110), width=stroke)
+    if pct is not None and not offline:
+        gap = stroke + 1.1 * k  # espace entre le contour et le remplissage, comme la batterie
+        inner_top, inner_bottom = gap, h - gap
+        level = inner_bottom - (inner_bottom - inner_top) * min(max(pct, 0), 100) / 100
+        if pct > 0:
+            fill_top = min(level, inner_bottom - 1.6 * k)  # même à 1 %, un trait reste visible
+            d.rounded_rectangle((gap, fill_top, w - gap - 1, inner_bottom), radius=(w - 2 * gap) / 2, fill=ink)
+    out = img.resize((MENUBAR_PT[0] * scale, MENUBAR_PT[1] * scale), Image.LANCZOS)
+    return out, not critical
+
+
 def gauge(pct: float | None, size: int = 240, offline: bool = False) -> Image.Image:
     """Grande jauge du popup : anneau fin + pourcentage au centre."""
     s = size * SUPERSAMPLE
@@ -235,6 +267,21 @@ def app_icon_images() -> list[Image.Image]:
     return out
 
 
+def mac_app_icon(size: int = 1024) -> Image.Image:
+    """Icône macOS : même dessin, avec la marge des icônes de macOS (contenu sur 80 % de la grille)."""
+    s = size * 2
+    img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    pad = int(s * 0.1)
+    inner = s - 2 * pad
+    d.rounded_rectangle((pad, pad, s - pad - 1, s - pad - 1), radius=int(inner * 0.225), fill=BG)
+    inset = int(inner * 0.18)
+    ring = Image.new("RGBA", (inner - 2 * inset,) * 2, (0, 0, 0, 0))
+    _draw_ring(ImageDraw.Draw(ring), ring.width, 70, ACCENT, int(ring.width * 0.16), TRACK)
+    img.alpha_composite(ring, (pad + inset, pad + inset))
+    return img.resize((size, size), Image.LANCZOS)
+
+
 def save_app_icon(path: Path) -> None:
     images = app_icon_images()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -252,6 +299,11 @@ def _preview(out: Path) -> None:
     for i, v in enumerate(values):
         small.alpha_composite(tray_icon(v, size=24), (8 + i * 40, 4))
     small.save(out / "tray_icons_24px.png")
+    bar = Image.new("RGBA", (len(values) * 40 + 16, 40), "#ECECEC")
+    for i, v in enumerate([5, 42, 75, 97, None]):
+        icon, _ = menubar_icon(v)
+        bar.alpha_composite(icon, (12 + i * 40, 4))
+    bar.save(out / "menubar_icons.png")
     for v in values:
         bg = Image.new("RGBA", (240, 240), CARD)
         bg.alpha_composite(gauge(v))
@@ -264,8 +316,12 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Génère des aperçus des icônes")
     p.add_argument("--preview", type=Path, default=Path("preview"))
     p.add_argument("--ico", type=Path, help="Écrit uniquement l'icône .ico de l'appli")
+    p.add_argument("--icns", type=Path, help="Écrit uniquement l'icône .icns (macOS)")
     args = p.parse_args()
     if args.ico:
         save_app_icon(args.ico)
+    elif args.icns:
+        args.icns.parent.mkdir(parents=True, exist_ok=True)
+        mac_app_icon().save(args.icns, format="ICNS")
     else:
         _preview(args.preview)

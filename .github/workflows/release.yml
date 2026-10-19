@@ -1,8 +1,8 @@
 name: Build & Release
 
-# - Sur une PR : tests + construction de l'installeur (sans publication).
+# - Sur une PR : tests + construction de l'installeur Windows et du .dmg macOS (sans publication).
 # - Sur main : si la version de src/claude_tracker/__init__.py n'a pas encore
-#   de release, construit l'installeur et publie la release v<version>.
+#   de release, publie la release v<version> avec les deux fichiers.
 on:
   push:
     branches: [main]
@@ -13,8 +13,10 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  windows:
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -42,21 +44,48 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ClaudeTracker-${{ steps.version.outputs.version }}-Setup
+          name: windows
           path: dist/ClaudeTracker-${{ steps.version.outputs.version }}-Setup.exe
           if-no-files-found: error
 
+  macos:
+    runs-on: macos-14  # Apple Silicon (arm64)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build
+        run: ./build_mac.sh python
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/ClaudeTracker-*-macOS-arm64.dmg
+          if-no-files-found: error
+
+  release:
+    needs: [windows, macos]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
       - name: Publish release
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          $tag = "v${{ steps.version.outputs.version }}"
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "La release $tag existe déjà : rien à publier (pense à changer __version__)."
+          tag="v${{ needs.windows.outputs.version }}"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo "La release $tag existe déjà : rien à publier (pense à changer __version__)."
             exit 0
-          }
-          gh release create $tag "dist/ClaudeTracker-${{ steps.version.outputs.version }}-Setup.exe" `
-            --target $env:GITHUB_SHA --title "Claude Usage Tray $tag" --generate-notes
+          fi
+          ls -la assets
+          gh release create "$tag" assets/* \
+            --target "$GITHUB_SHA" --title "Claude Usage Tray $tag" --generate-notes

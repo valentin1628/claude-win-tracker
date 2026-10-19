@@ -1,9 +1,10 @@
-"""Réglages persistants dans %APPDATA%\\ClaudeTracker\\config.json."""
+"""Réglages persistants dans %APPDATA%\\ClaudeTracker\\config.json (macOS : Application Support)."""
 
 from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
@@ -14,6 +15,8 @@ CONFIG_VERSION = 3
 
 
 def config_dir() -> Path:
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "ClaudeTracker"
     base = os.environ.get("APPDATA")
     root = Path(base) if base else Path.home() / ".config"
     return root / "ClaudeTracker"
@@ -32,7 +35,7 @@ class Config:
     auto_refresh_token: bool = True  # comme Claude Code : renouvelle le jeton expiré en silence
     check_updates: bool = True
     details_open: bool = False
-    theme: str = "auto"  # auto (suit Windows) | dark | light
+    theme: str = "auto"  # auto (suit le système) | dark | light
     hotkey_enabled: bool = True
     hotkey: str = "Ctrl+Alt+C"
     minibar: bool = False

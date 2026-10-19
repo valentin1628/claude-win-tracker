@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import time
+import tkinter as tk
 from typing import Callable
 
 import customtkinter as ctk
@@ -154,8 +155,22 @@ class UsagePopup(ctk.CTkToplevel):
         self._notice: str | None = None
         self._hidden_at = 0.0
         self._tick_job: str | None = None
+        # macOS : renvoie (centre x, bas) de l'icône de la barre de menus, pour ouvrir juste dessous.
+        self.anchor: Callable[[], tuple[float, float] | None] | None = None
 
-        body = ctk.CTkFrame(self, fg_color=render.BG, corner_radius=0)
+        radius = 0
+        if sys.platform == "darwin":
+            # Fenêtre transparente + cadre arrondi : un panneau aux coins arrondis, comme un popover.
+            try:
+                self.attributes("-transparent", True)
+                tk.Toplevel.configure(self, bg="systemTransparent")
+                radius = 14
+            except tk.TclError:
+                pass
+        outer = ctk.CTkFrame(self, fg_color=render.BG, corner_radius=radius,
+                             bg_color="systemTransparent" if radius else "transparent")
+        outer.pack(fill="both", expand=True)
+        body = ctk.CTkFrame(outer, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=16, pady=14)
 
         # En-tête
@@ -316,6 +331,12 @@ class UsagePopup(ctk.CTkToplevel):
         """Ancre la fenêtre en bas à droite, au-dessus de la barre des tâches."""
         self.update_idletasks()
         w, h = self.winfo_reqwidth(), self.winfo_reqheight()
+        point = self.anchor() if self.anchor else None
+        if point:  # macOS : centré sous l'icône de la barre de menus
+            screen_w = self.winfo_screenwidth()
+            x = min(max(8, int(point[0] - w / 2)), screen_w - w - 8)
+            self.geometry(f"+{x}+{int(point[1]) + 6}")
+            return
         left, top, right, bottom = _work_area(self)
         self.geometry(f"+{right - w - MARGIN}+{max(top, bottom - h - MARGIN)}")
 
@@ -324,6 +345,10 @@ class UsagePopup(ctk.CTkToplevel):
         self.deiconify()
         self.lift()
         _round_corners(self)
+        if sys.platform == "darwin":
+            from .mac_status import activate_app
+
+            activate_app()  # une appli de barre de menus doit s'activer pour passer devant
         self.after(10, self.focus_force)
         if self._tick_job is None:
             self._tick()

@@ -15,12 +15,13 @@ import requests
 
 from . import __version__
 from .config import Config
+from .credentials_store import FileStore, default_store
 from .usage_client import (
     OAUTH_BETA,
     USAGE_URL,
+    CredentialsNotFound,
     UsageClient,
     UsageError,
-    default_credentials_path,
     load_credentials,
     parse_usage,
 )
@@ -41,19 +42,17 @@ def run(
         auto_refresh = Config.load().auto_refresh_token
     _line(None, f"Claude Usage Tray {__version__} - Python {platform.python_version()} - {platform.platform()}")
 
-    path = credentials_path or default_credentials_path()
-    if not path.exists():
-        _line(False, f"Fichier introuvable : {path}")
-        print("       -> Installe Claude Code sur ce PC puis connecte-toi : `claude` puis `/login`.")
-        print("          (sur Mac, le jeton est dans le Trousseau : ce fichier n'existe que sous Windows/Linux)")
-        return 1
-    _line(True, f"Fichier du jeton : {path}")
-
+    store = FileStore(credentials_path) if credentials_path else default_store()
     try:
-        creds = load_credentials(path)
+        creds = load_credentials(store)
+    except CredentialsNotFound:
+        _line(False, f"Jeton introuvable : {store.label}")
+        print("       -> Installe Claude Code puis connecte-toi : `claude` puis `/login`.")
+        return 1
     except UsageError as exc:
         _line(False, str(exc))
         return 1
+    _line(True, f"Jeton lu dans : {store.label}")
     _line(True, f"Jeton présent - offre : {creds.plan or 'inconnue'}")
 
     http = session or requests.Session()
@@ -64,7 +63,7 @@ def run(
             print("       -> Lance `claude` (Claude Code) une fois pour qu'il le renouvelle, puis relance ce test.")
             return 1
         _line(None, f"Jeton expiré le {local:%d/%m %H:%M} : renouvellement...")
-        client = UsageClient(credentials_path=path, auto_refresh_token=True)
+        client = UsageClient(store=store, auto_refresh_token=True)
         client.session = http
         try:
             creds = client.refresh()
