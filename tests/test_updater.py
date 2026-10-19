@@ -8,6 +8,12 @@ from claude_tracker import updater
 SETUP = "ClaudeTracker-0.3.0-Setup.exe"
 
 
+@pytest.fixture(autouse=True)
+def windows_assets(monkeypatch):
+    # Ces tests portent sur l'installeur Windows, même quand la CI les lance sur Mac.
+    monkeypatch.setattr(updater, "asset_suffix", lambda platform=None: updater.SETUP_SUFFIX)
+
+
 class FakeResponse:
     def __init__(self, status=200, payload=None, content=b""):
         self.status_code = status

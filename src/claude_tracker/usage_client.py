@@ -7,9 +7,6 @@ officiellement : tout ce qui dépend de son format est isolé dans ce module.
 
 from __future__ import annotations
 
-import json
-import os
-import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -19,6 +16,14 @@ from typing import Any
 import requests
 
 from . import __version__
+from .credentials_store import (
+    FileStore,
+    KeychainStore,
+    Store,
+    StoreError,
+    default_credentials_path,
+    default_store,
+)
 
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 # Renouvellement du jeton : mêmes adresse, client_id et format que Claude Code (vérifié sur la v2.1.299).
@@ -169,27 +174,29 @@ def parse_usage(payload: dict[str, Any], plan: str | None = None) -> UsageSnapsh
     return UsageSnapshot(windows=windows, plan=plan)
 
 
-def default_credentials_path() -> Path:
-    config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
-    base = Path(config_dir) if config_dir else Path.home() / ".claude"
-    return base / ".credentials.json"
+def _as_store(source: Path | Store | None) -> Store:
+    if source is None:
+        return default_store()
+    if isinstance(source, (str, Path)):
+        return FileStore(Path(source))
+    return source
 
 
-def load_credentials(path: Path | None = None) -> Credentials:
-    path = path or default_credentials_path()
+def load_credentials(source: Path | Store | None = None) -> Credentials:
+    """Lit le jeton de Claude Code (fichier sous Windows/Linux, Trousseau sous macOS)."""
+    store = _as_store(source)
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        raise CredentialsNotFound(
-            "Claude Code n'est pas connecté sur ce PC (fichier .credentials.json introuvable)"
-        ) from None
-    except (OSError, json.JSONDecodeError) as exc:
-        raise UsageError(f"Impossible de lire {path.name} : {exc}") from None
+        raw = store.read()
+    except StoreError as exc:
+        raise UsageError(str(exc)) from None
+    if raw is None:
+        where = "Trousseau" if isinstance(store, KeychainStore) else "fichier .credentials.json"
+        raise CredentialsNotFound(f"Claude Code n'est pas connecté sur cet ordinateur ({where} introuvable)")
 
     oauth = raw.get("claudeAiOauth") or {}
     token = oauth.get("accessToken")
     if not token:
-        raise CredentialsNotFound("Aucun jeton OAuth Claude dans .credentials.json")
+        raise CredentialsNotFound("Aucun jeton OAuth Claude enregistré par Claude Code")
 
     expires_ms = oauth.get("expiresAt")
     expires_at = (
@@ -216,8 +223,9 @@ class UsageClient:
         credentials_path: Path | None = None,
         auto_refresh_token: bool = False,
         timeout: float = 15.0,
+        store: Store | None = None,
     ) -> None:
-        self.credentials_path = credentials_path or default_credentials_path()
+        self.store = store or _as_store(credentials_path)
         self.auto_refresh_token = auto_refresh_token
         self.timeout = timeout
         self.session = requests.Session()
@@ -225,7 +233,7 @@ class UsageClient:
 
     def fetch(self) -> UsageSnapshot:
         # Le fichier est relu à chaque fois : Claude Code a pu renouveler le jeton.
-        creds = load_credentials(self.credentials_path)
+        creds = load_credentials(self.store)
         if creds.expiring and self.auto_refresh_token and creds.refresh_token:
             creds = self.refresh()
         elif creds.expired:
@@ -263,7 +271,7 @@ class UsageClient:
         Le fichier est relu juste avant : si Claude Code vient de le renouveler,
         on réutilise son jeton sans rien demander au serveur.
         """
-        creds = load_credentials(self.credentials_path)
+        creds = load_credentials(self.store)
         if not force and not creds.expiring:
             return creds
         if not creds.refresh_token:
@@ -300,16 +308,8 @@ class UsageClient:
             oauth["expiresAt"] = int((time.time() + float(data["expires_in"])) * 1000)
         if isinstance(data.get("scope"), str) and data["scope"].strip():
             oauth["scopes"] = data["scope"].split()
-        _atomic_write_json(self.credentials_path, dict(creds.raw, claudeAiOauth=oauth))
-        return load_credentials(self.credentials_path)
-
-
-def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".credentials.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(data, fh)
-        os.replace(tmp, path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
+        try:
+            self.store.write(dict(creds.raw, claudeAiOauth=oauth))
+        except (StoreError, OSError) as exc:
+            raise UsageError(str(exc)) from None
+        return load_credentials(self.store)

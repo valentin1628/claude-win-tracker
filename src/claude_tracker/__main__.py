@@ -34,8 +34,25 @@ class DemoFetcher:
         return UsageSnapshot(windows=windows, plan="pro", demo=True)
 
 
+_lock_file = None  # gardé ouvert tant que l'appli tourne
+
+
 def _single_instance() -> bool:
-    """Empêche de lancer deux fois l'appli (mutex nommé Windows)."""
+    """Empêche de lancer deux fois l'appli (mutex nommé Windows, verrou de fichier sur Mac)."""
+    if sys.platform == "darwin":
+        import fcntl
+
+        from .config import config_dir
+
+        global _lock_file
+        path = config_dir() / "app.lock"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _lock_file = open(path, "w")
+        try:
+            fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return False
+        return True
     if sys.platform != "win32":
         return True
     import ctypes
@@ -47,7 +64,7 @@ def _single_instance() -> bool:
 
 def _run_check(run) -> int:
     """Diagnostic : dans la console, ou dans une boîte de dialogue pour l'exe sans console."""
-    if sys.stdout is not None:
+    if sys.stdout is not None or sys.platform != "win32":
         return run()
     import contextlib
     import ctypes
@@ -69,6 +86,8 @@ def main() -> None:
     parser.add_argument("--check", action="store_true", help="diagnostic de la connexion, sans lancer l'appli")
     parser.add_argument("--interval", type=int, help="intervalle de rafraîchissement (s, min 60)")
     parser.add_argument("--version", action="version", version=__version__)
+    # Test de fumée de la CI : l'appli démarre puis se ferme toute seule.
+    parser.add_argument("--exit-after", type=float, help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     if args.check:
@@ -77,7 +96,8 @@ def main() -> None:
         sys.exit(_run_check(run))
 
     if not _single_instance():
-        print("Claude Usage Tray tourne déjà (regarde près de l'horloge, flèche ^).", file=sys.stderr)
+        where = "dans la barre de menus, en haut" if sys.platform == "darwin" else "près de l'horloge, flèche ^"
+        print(f"Claude Usage Tray tourne déjà (regarde {where}).", file=sys.stderr)
         return
 
     config = Config.load()
@@ -94,6 +114,8 @@ def main() -> None:
         app = TrayApp(config, fetcher=DemoFetcher(), history=History(":memory:"))
     else:
         app = TrayApp(config)
+    if args.exit_after:
+        app.root.after(int(args.exit_after * 1000), app.quit)
     app.run()
     # La boucle est terminée : on ferme la base puis on quitte franchement, même si un
     # thread de pystray traîne (sinon l'installeur d'une mise à jour trouverait l'appli ouverte).

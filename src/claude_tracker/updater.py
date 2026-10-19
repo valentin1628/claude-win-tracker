@@ -1,7 +1,8 @@
 """Mise à jour automatique depuis les Releases GitHub.
 
-L'appli installée (exe) interroge la dernière release publiée. Si elle est plus
-récente, elle propose de télécharger l'installeur et de le lancer en silencieux.
+L'appli installée interroge la dernière release publiée. Si elle est plus récente :
+- Windows : elle télécharge l'installeur et le lance en silencieux ;
+- macOS : elle télécharge le .dmg et l'ouvre (il reste à glisser l'appli dans Applications).
 """
 
 from __future__ import annotations
@@ -22,6 +23,11 @@ from . import __version__
 REPO = "valentin1628/claude-win-tracker"
 LATEST_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 SETUP_SUFFIX = "-Setup.exe"
+MAC_SUFFIX = "-macOS-arm64.dmg"
+
+
+def asset_suffix(platform: str = sys.platform) -> str:
+    return MAC_SUFFIX if platform == "darwin" else SETUP_SUFFIX
 
 
 class UpdateError(Exception):
@@ -44,10 +50,12 @@ def parse_version(text: str) -> tuple[int, ...]:
 
 def updates_supported() -> bool:
     # En mode sources, on met à jour avec git pull.
-    return bool(getattr(sys, "frozen", False)) and sys.platform == "win32"
+    return bool(getattr(sys, "frozen", False)) and sys.platform in ("win32", "darwin")
 
 
-def check_latest(session: requests.Session | None = None, current: str = __version__) -> UpdateInfo | None:
+def check_latest(
+    session: requests.Session | None = None, current: str = __version__, suffix: str | None = None
+) -> UpdateInfo | None:
     """Renvoie la mise à jour disponible, ou None (y compris en cas d'erreur)."""
     http = session or requests.Session()
     try:
@@ -65,10 +73,11 @@ def check_latest(session: requests.Session | None = None, current: str = __versi
     tag = str(data.get("tag_name") or "")
     if not tag or parse_version(tag) <= parse_version(current):
         return None
+    suffix = suffix or asset_suffix()
     for asset in data.get("assets") or []:
         name = str(asset.get("name") or "")
         url = asset.get("browser_download_url")
-        if name.endswith(SETUP_SUFFIX) and url:
+        if name.endswith(suffix) and url:
             digest = str(asset.get("digest") or "")
             sha = digest.split(":", 1)[1].lower() if digest.startswith("sha256:") else None
             return UpdateInfo(tag.lstrip("v"), url, name, sha, data.get("html_url") or "")
@@ -99,6 +108,9 @@ def download(info: UpdateInfo, session: requests.Session | None = None, folder: 
 
 def launch_installer(setup: Path) -> None:
     """Lance l'installeur en silencieux, détaché : il survit à la fermeture de l'appli."""
+    if sys.platform == "darwin":
+        subprocess.Popen(["/usr/bin/open", str(setup)])  # le Finder monte le .dmg et l'affiche
+        return
     flags = 0
     if os.name == "nt":
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "claude-win-tracker"
 dynamic = ["version"]
-description = "Suivi de l'utilisation de l'abonnement Claude dans la barre des tâches Windows"
+description = "Suivi de l'utilisation de l'abonnement Claude dans la barre des tâches Windows et la barre de menus macOS"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -13,6 +13,7 @@ dependencies = [
     "Pillow>=10.1",
     "pystray>=0.19",
     "requests>=2.31",
+    "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]

@@ -110,7 +110,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self._segmented(tab, "Thème", "theme", THEMES)
 
         if autostart.supported():
-            row = self._row(tab, "Lancer au démarrage de Windows")
+            row = self._row(tab, autostart.label())
             auto_var = ctk.BooleanVar(value=autostart.is_enabled())
 
             def toggle_autostart() -> None:

@@ -1,6 +1,6 @@
 # Claude Usage Tray
 
-Une petite icône à côté de l'horloge Windows qui te dit où tu en es de ton abonnement Claude (Pro ou Max).
+Une petite icône à côté de l'horloge Windows (ou dans la barre de menus du Mac) qui te dit où tu en es de ton abonnement Claude (Pro ou Max).
 
 Claude limite l'utilisation de deux façons : une **session de 5 heures** et un **quota par semaine**. Quand tu arrives au bout, il faut attendre. Cette appli te montre en permanence combien tu as consommé, et dans combien de temps ça se recharge. Plus besoin d'aller vérifier sur le site.
 
@@ -14,7 +14,7 @@ Claude limite l'utilisation de deux façons : une **session de 5 heures** et un 
 
 ## Ce qu'il te faut
 
-- Un PC sous **Windows 10 ou 11**.
+- Un PC sous **Windows 10 ou 11**, ou un **Mac à puce Apple** (M1, M2, M3, M4…) sous macOS 13 ou plus récent. Pour le Mac, [c'est par ici](#sur-mac).
 - Un abonnement **Claude Pro ou Max**.
 - **Claude Code** installé et connecté à ton compte. On le fait ensemble juste en dessous, c'est gratuit avec ton abonnement.
 
@@ -50,6 +50,57 @@ Windows va probablement afficher un écran bleu « Windows a protégé votre ord
 Pas besoin d'être administrateur. Une fois l'installation finie, l'icône apparaît près de l'horloge.
 
 C'est tout. La connexion de Claude Code expire toutes les quelques heures (et après un redémarrage du PC), mais l'appli la renouvelle toute seule, exactement comme le fait Claude Code. Tu n'as pas besoin d'ouvrir Claude Code pour que les chiffres restent à jour.
+
+---
+
+## Sur Mac
+
+Sur Mac, l'appli vit dans la **barre de menus**, en haut à droite, comme la batterie ou le Wi-Fi : une petite jauge verticale qui se remplit de bas en haut, avec le pourcentage à côté. Elle prend automatiquement la couleur de ta barre de menus (claire, sombre ou teintée par ton fond d'écran), et ne passe en rouge qu'à partir de 85 %. Pas d'icône dans le Dock.
+
+- **Clic** sur la jauge : la fenêtre s'ouvre juste en dessous. Clique ailleurs pour la refermer.
+- **Clic droit** (ou ctrl-clic) : le menu (Rafraîchir, Réglages, notifications, mises à jour, Quitter).
+
+Le raccourci clavier et la mini-barre n'existent que sur Windows.
+
+### Étape 1 : connecter Claude Code
+
+L'appli lit la connexion que Claude Code enregistre dans le **Trousseau** du Mac. Si tu utilises déjà Claude Code dans le Terminal, il n'y a rien à faire.
+
+Sinon, ouvre l'appli **Terminal** (Cmd + Espace, tape « Terminal ») et colle :
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+```
+
+Puis tape `claude`, ensuite `/login` dans Claude Code, connecte-toi dans le navigateur et quitte avec `/exit`.
+
+> Claude Code intégré à l'appli Claude Desktop peut garder sa connexion à un autre endroit. Si l'appli affiche « Claude Code n'est pas connecté », fais l'étape ci-dessus une fois : elle ne gêne pas Claude Desktop.
+
+### Étape 2 : installer l'appli
+
+1. Sur la page des [téléchargements](https://github.com/valentin1628/claude-win-tracker/releases/latest), prends le fichier `ClaudeTracker-...-macOS-arm64.dmg`.
+2. Ouvre-le et glisse **Claude Usage Tray** sur le dossier **Applications**.
+3. Lance-la depuis le dossier Applications.
+
+macOS va refuser de l'ouvrir la première fois, parce que l'appli n'est pas signée par Apple (ça coûte 99 $ par an). Pour l'autoriser, une seule fois :
+
+- va dans **Réglages Système → Confidentialité et sécurité**, descends jusqu'au message sur « Claude Usage Tray » et clique sur **Ouvrir quand même** ;
+- ou, plus rapide, colle ceci dans le Terminal :
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/Claude Usage Tray.app"
+  ```
+
+Pour qu'elle se lance toute seule : clic droit sur la jauge → **Lancer au démarrage**.
+
+**Mises à jour sur Mac** : quand une version sort, une notification te prévient. Clic droit → **Installer la mise à jour** : le nouveau `.dmg` se télécharge et s'ouvre, l'appli se ferme. Glisse-la à nouveau dans Applications (**Remplacer**), puis relance-la.
+
+**Diagnostic sur Mac** : dans le Terminal,
+```bash
+"/Applications/Claude Usage Tray.app/Contents/MacOS/Claude Usage Tray" --check
+```
+Il te dit où il a cherché la connexion (Trousseau ou fichier) et ce qui bloque.
+
+**Désinstaller** : clic droit → Quitter, puis mets l'appli à la corbeille. Les réglages sont dans `~/Library/Application Support/ClaudeTracker`.
 
 ---
 
@@ -254,11 +305,19 @@ winget install JRSoftware.InnoSetup   # une seule fois
 .\build.ps1                           # -> dist\ClaudeTracker-<version>-Setup.exe
 ```
 
+### Construire l'appli Mac
+
+Sur un Mac Apple Silicon :
+
+```bash
+./build_mac.sh            # -> dist/ClaudeTracker-<version>-macOS-arm64.dmg
+```
+
 ### Publier une version
 
 1. Change `__version__` dans `src/claude_tracker/__init__.py`.
 2. Fusionne dans `main`.
 
-GitHub Actions lance les tests, construit l'installeur sur Windows et publie la release. Les applis installées la proposent ensuite toutes seules. Sur une pull request, l'installeur est construit sans être publié : il est disponible dans les artefacts du build.
+GitHub Actions lance les tests, construit l'installeur sur Windows et le `.dmg` sur Mac, puis publie la release avec les deux. Les applis installées la proposent ensuite toutes seules. Sur une pull request, l'installeur est construit sans être publié : il est disponible dans les artefacts du build.
 
 </details>
