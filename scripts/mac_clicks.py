@@ -4,6 +4,7 @@ Les vrais clics passent par la boucle d'événements de l'appli : c'est ce chemi
 la bloquait en v0.7.0. Usage : python mac_clicks.py <journal de l'appli>
 """
 
+import datetime
 import re
 import sys
 import time
@@ -21,6 +22,11 @@ def click(x: float, y: float, right: bool = False) -> None:
         event = Quartz.CGEventCreateMouseEvent(None, kind, (x, y), button)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
         time.sleep(0.05)
+
+
+def popup_shown_times(log: Path) -> list[float]:
+    stamps = re.findall(r"^(\S+ \S+) INFO \S+ Popup affiché", log.read_text(errors="replace"), re.M)
+    return [datetime.datetime.strptime(s, "%Y-%m-%d %H:%M:%S,%f").timestamp() for s in stamps]
 
 
 def main() -> None:
@@ -48,10 +54,21 @@ def main() -> None:
         ("à côté", (600, 600), False),   # ferme le menu
         ("à côté", (300, 400), False),
     ]
+    latencies = []
     for label, point, right in steps:
         print(f"Clic {label} {point}")
+        before = len(popup_shown_times(log))
+        t0 = time.time()
         click(*point, right=right)
         time.sleep(2.5)
+        shown = popup_shown_times(log)
+        if label == "icône" and len(shown) > before:
+            latencies.append(shown[before] - t0)
+    if latencies:
+        print("Délai clic -> popup (ms) :", [round(x * 1000) for x in latencies])
+        if max(latencies) > 0.5:
+            print("::error::Le popup met trop de temps à s'ouvrir après un clic")
+            sys.exit(1)
 
 
 if __name__ == "__main__":

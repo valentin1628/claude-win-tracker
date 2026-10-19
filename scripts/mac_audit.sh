@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI macOS : lance l'appli construite 45 s (au-delà des minuteries de 30 s) sous fs_usage,
+# CI macOS : lance l'appli construite 60 s (au-delà des minuteries de 30 s) sous fs_usage,
 # puis échoue si elle a touché un dossier protégé (Bureau, Documents, Photos, iCloud…).
 # Ce sont ces accès qui déclenchent les demandes d'autorisation de macOS.
 set -uo pipefail
@@ -18,16 +18,19 @@ rm -f ~/Library/Logs/ClaudeTracker/*.log
 sudo fs_usage -w -f filesys "Claude Usage Tra" > fs.log 2>&1 &
 tracer=$!
 sleep 2
-open -n "dist/Claude Usage Tray.app" --args --demo --exit-after 45
-python scripts/mac_clicks.py "$applog" || true
+open -n "dist/Claude Usage Tray.app" --args --demo --exit-after 60
+clicks_ok=0
+python scripts/mac_clicks.py "$applog" || clicks_ok=1
 
 # CPU au repos (après les clics) : un widget ne doit presque rien consommer.
 pid=$(pgrep -f "Claude Usage Tray.app/Contents/MacOS" | head -1)
 if [ -n "$pid" ]; then
-    sleep 3
-    cpu=$(ps -p "$pid" -o %cpu= | tr -d ' ')
-    time_before=$(ps -p "$pid" -o time= | tr -d ' ')
-    echo "CPU au repos : ${cpu} % (temps CPU cumulé ${time_before})"
+    # Temps CPU consommé pendant 15 s sans rien faire (ps donne m:ss.cc).
+    to_s() { echo "$1" | awk -F: '{print $1 * 60 + $2}'; }
+    t1=$(to_s "$(ps -p "$pid" -o time= | tr -d ' ')")
+    sleep 15
+    t2=$(to_s "$(ps -p "$pid" -o time= | tr -d ' ')")
+    echo "CPU au repos sur 15 s : $(echo "scale=2; ($t2 - $t1) * 100 / 15" | bc) %"
 fi
 
 # L'appli doit s'être fermée toute seule (--exit-after) : sinon elle est figée.
@@ -59,6 +62,10 @@ protected="[[:space:]]($HOME/(Desktop|Documents|Downloads|Pictures|Movies|Music|
 if grep -qE "$protected" fs.log; then
     echo "::error::L'appli accède à des dossiers protégés (demandes d'autorisation macOS) :"
     grep -E "$protected" fs.log | head -40
+    exit 1
+fi
+if [ "$clicks_ok" -ne 0 ]; then
+    echo "::error::Test des clics en échec"
     exit 1
 fi
 if [ "$status" -ne 0 ] || grep -q "Exception\|Erreur\|Fatal" ~/Library/Logs/ClaudeTracker/*.log 2>/dev/null; then
