@@ -9,7 +9,7 @@ from typing import Callable
 import customtkinter as ctk
 
 from . import render
-from .formatting import ago_text, plan_label, reset_text
+from .formatting import ago_text, cost_text, plan_label, reset_text
 from .usage_client import UsageSnapshot, UsageWindow
 
 GAUGE_PX = 112  # taille logique d'une jauge (customtkinter gère le DPI)
@@ -57,8 +57,15 @@ class GaugeCard(ctk.CTkFrame):
         self.reset_label = ctk.CTkLabel(
             self, text="", text_color=render.TEXT_MUTED, font=ctk.CTkFont(size=11), height=18
         )
-        self.reset_label.pack(pady=(0, 12))
+        self.reset_label.pack()
+        self.forecast_label = ctk.CTkLabel(
+            self, text=" ", text_color=render.TEXT_MUTED, font=ctk.CTkFont(size=11), height=16
+        )
+        self.forecast_label.pack(pady=(0, 10))
         self.set(None, offline=False)
+
+    def set_forecast(self, text: str) -> None:
+        self.forecast_label.configure(text=text or " ")
 
     def set(self, window: UsageWindow | None, offline: bool) -> None:
         pct = window.utilization if window else None
@@ -66,6 +73,44 @@ class GaugeCard(ctk.CTkFrame):
         self._image = ctk.CTkImage(light_image=img, dark_image=img, size=(GAUGE_PX, GAUGE_PX))
         self.image_label.configure(image=self._image)
         self.reset_label.configure(text=reset_text(window) or " ")
+
+
+class DetailsPanel(ctk.CTkFrame):
+    """Volet « Détails » : courbe 24 h, barres par jour, coût équivalent API."""
+
+    WIDTH = 300
+
+    def __init__(self, master) -> None:
+        super().__init__(master, fg_color=render.CARD, corner_radius=14)
+        muted = {"text_color": render.TEXT_MUTED, "font": ctk.CTkFont(size=11)}
+        ctk.CTkLabel(self, text="Session 5h · dernières 24 h", anchor="w", **muted).pack(fill="x", padx=14, pady=(10, 0))
+        self.spark = ctk.CTkLabel(self, text="")
+        self.spark.pack(padx=14, pady=(2, 6))
+        ctk.CTkLabel(self, text="Semaine · consommation par jour (%)", anchor="w", **muted).pack(fill="x", padx=14)
+        self.bars = ctk.CTkLabel(self, text="")
+        self.bars.pack(padx=14, pady=(2, 8))
+        self.cost = ctk.CTkLabel(
+            self, text="", text_color=render.TEXT, font=ctk.CTkFont(size=12, weight="bold"), justify="left", anchor="w"
+        )
+        self.cost.pack(fill="x", padx=14)
+        ctk.CTkLabel(
+            self, text="Coût équivalent API : usage Claude Code uniquement, tarifs publics.",
+            anchor="w", wraplength=self.WIDTH - 10, justify="left", text_color=render.TEXT_MUTED,
+            font=ctk.CTkFont(size=10),
+        ).pack(fill="x", padx=14, pady=(0, 10))
+        self._images: list = []
+
+    def update_data(self, series, start: float, end: float, days, cost_summary) -> None:
+        w = self.WIDTH - 28
+        spark = render.sparkline(series, start, end, width=w * 2, height=64 * 2)
+        bars = render.day_bars(days, width=w * 2, height=78 * 2)
+        self._images = [
+            ctk.CTkImage(light_image=spark, dark_image=spark, size=(w, 64)),
+            ctk.CTkImage(light_image=bars, dark_image=bars, size=(w, 78)),
+        ]
+        self.spark.configure(image=self._images[0])
+        self.bars.configure(image=self._images[1])
+        self.cost.configure(text=cost_text(cost_summary))
 
 
 class ExtraRow(ctk.CTkFrame):
@@ -88,13 +133,22 @@ class ExtraRow(ctk.CTkFrame):
 
 
 class UsagePopup(ctk.CTkToplevel):
-    def __init__(self, master, on_refresh: Callable[[], None], on_login: Callable[[], None] | None = None) -> None:
+    def __init__(
+        self,
+        master,
+        on_refresh: Callable[[], None],
+        on_login: Callable[[], None] | None = None,
+        on_details: Callable[[bool], None] | None = None,
+        details_open: bool = False,
+    ) -> None:
         super().__init__(master, fg_color=render.BG)
         self.withdraw()
         self.overrideredirect(True)
         self.attributes("-topmost", True)
         self._on_refresh = on_refresh
         self._on_login = on_login
+        self._on_details = on_details
+        self._details_open = details_open
         self._snapshot: UsageSnapshot | None = None
         self._notice: str | None = None
         self._hidden_at = 0.0
@@ -145,6 +199,14 @@ class UsagePopup(ctk.CTkToplevel):
             font=ctk.CTkFont(size=12, weight="bold"), command=self._login_clicked,
         )
 
+        # Volet « Détails » (fermé par défaut)
+        self.details_btn = ctk.CTkButton(
+            body, text="", height=26, corner_radius=8, fg_color="transparent", hover_color=render.CARD,
+            text_color=render.TEXT_MUTED, font=ctk.CTkFont(size=12), command=self._toggle_details,
+        )
+        self.details_btn.pack(fill="x", pady=(8, 0))
+        self.details = DetailsPanel(body)
+
         # Pied de page
         self.footer = ctk.CTkLabel(body, text="", text_color=render.TEXT_MUTED, font=ctk.CTkFont(size=11), wraplength=300)
         self.footer.pack(fill="x", pady=(10, 0))
@@ -190,10 +252,33 @@ class UsagePopup(ctk.CTkToplevel):
         self.login_btn.pack_forget()
         if error:
             self.message.configure(text=f"⚠ {error}")
-            self.message.pack(fill="x", pady=(10, 0), before=self.footer)
+            self.message.pack(fill="x", pady=(10, 0), before=self.details_btn)
         if show_login and self._on_login:
-            self.login_btn.pack(fill="x", pady=(10, 0), before=self.footer)
+            self.login_btn.pack(fill="x", pady=(10, 0), before=self.details_btn)
+        self._apply_details_visibility()
         self._update_footer()
+
+    def update_extras(self, forecasts: dict[str, str], details: tuple | None) -> None:
+        """Prévisions sous les jauges et contenu du volet Détails."""
+        self.session_card.set_forecast(forecasts.get("five_hour", ""))
+        self.weekly_card.set_forecast(forecasts.get("seven_day", ""))
+        if details is not None:
+            self.details.update_data(*details)
+
+    def _toggle_details(self) -> None:
+        self._details_open = not self._details_open
+        self._apply_details_visibility()
+        if self._on_details:
+            self._on_details(self._details_open)
+        if self.winfo_viewable():
+            self._reposition()
+
+    def _apply_details_visibility(self) -> None:
+        self.details_btn.configure(text="Détails ▴" if self._details_open else "Détails ▾")
+        if self._details_open:
+            self.details.pack(fill="x", pady=(4, 0), after=self.details_btn)
+        else:
+            self.details.pack_forget()
 
     def _update_footer(self) -> None:
         text = ago_text(self._snapshot.fetched_at if self._snapshot else None)
@@ -226,11 +311,15 @@ class UsagePopup(ctk.CTkToplevel):
             # Le clic sur l'icône retire le focus juste avant : on évite de rouvrir aussitôt.
             self.show()
 
-    def show(self) -> None:
+    def _reposition(self) -> None:
+        """Ancre la fenêtre en bas à droite, au-dessus de la barre des tâches."""
         self.update_idletasks()
         w, h = self.winfo_reqwidth(), self.winfo_reqheight()
         left, top, right, bottom = _work_area(self)
-        self.geometry(f"+{right - w - MARGIN}+{bottom - h - MARGIN}")
+        self.geometry(f"+{right - w - MARGIN}+{max(top, bottom - h - MARGIN)}")
+
+    def show(self) -> None:
+        self._reposition()
         self.deiconify()
         self.lift()
         _round_corners(self)

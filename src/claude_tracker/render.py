@@ -134,6 +134,61 @@ def gauge(pct: float | None, size: int = 240, offline: bool = False) -> Image.Im
     return img.resize((size, size), Image.LANCZOS)
 
 
+def sparkline(
+    points: list[tuple[float, float]], start: float, end: float, width: int = 300, height: int = 64
+) -> Image.Image:
+    """Courbe d'utilisation (0-100 %) entre deux horodatages, fond transparent."""
+    k = SUPERSAMPLE * height / 64  # tailles relatives : l'image peut être rendue en x2 (écrans HiDPI)
+    w, h = width * SUPERSAMPLE, height * SUPERSAMPLE
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    top, bottom = 4 * k, h - 2 * k
+    for level in (50, 100):  # repères discrets
+        y = bottom - (bottom - top) * level / 100
+        d.line([(0, y), (w, y)], fill=_hex_to_rgba(TRACK), width=max(1, int(k)))
+    d.line([(0, bottom), (w, bottom)], fill=_hex_to_rgba(TRACK), width=max(1, int(k)))
+    pts = [p for p in points if start <= p[0] <= end]
+    if len(pts) >= 2:
+        span = max(end - start, 1)
+        xy = [((p[0] - start) / span * w, bottom - (bottom - top) * min(p[1], 100) / 100) for p in pts]
+        color = color_for(pts[-1][1])
+        d.polygon([(xy[0][0], bottom), *xy, (xy[-1][0], bottom)], fill=_hex_to_rgba(color, 50))
+        d.line(xy, fill=_hex_to_rgba(color), width=int(2.2 * k), joint="curve")
+        x, y = xy[-1]
+        r = 3 * k
+        d.ellipse((x - r, y - r, x + r, y + r), fill=_hex_to_rgba(color))
+    return img.resize((width, height), Image.LANCZOS)
+
+
+def day_bars(values: list[tuple[str, float]], width: int = 300, height: int = 78) -> Image.Image:
+    """Barres verticales (une par jour) avec le libellé du jour et la valeur en %."""
+    k = SUPERSAMPLE * height / 78  # tailles relatives : l'image peut être rendue en x2 (écrans HiDPI)
+    w, h = width * SUPERSAMPLE, height * SUPERSAMPLE
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    f_label = font(int(11 * k), bold=False)
+    f_value = font(int(10 * k), bold=True)
+    label_h, value_h = 14 * k, 12 * k
+    top, bottom = value_h + 2 * k, h - label_h
+    n = max(len(values), 1)
+    slot = w / n
+    bar_w = slot * 0.55
+    peak = max([v for _, v in values] + [10.0])
+    for i, (label, value) in enumerate(values):
+        cx = slot * i + slot / 2
+        today = i == n - 1
+        color = ACCENT if today else "#B86A50"
+        bar_h = (bottom - top) * value / peak
+        x0, x1 = cx - bar_w / 2, cx + bar_w / 2
+        d.rounded_rectangle((x0, bottom - max(bar_h, 2 * k), x1, bottom), radius=3 * k,
+                            fill=_hex_to_rgba(color if value > 0 else TRACK))
+        if value >= 0.5:
+            d.text((cx, bottom - bar_h - 2 * k), f"{round(value)}", font=f_value,
+                   fill=_hex_to_rgba(TEXT_MUTED), anchor="mb")
+        d.text((cx, h), label, font=f_label, fill=_hex_to_rgba(TEXT if today else TEXT_MUTED), anchor="mb")
+    return img.resize((width, height), Image.LANCZOS)
+
+
 def app_icon_images() -> list[Image.Image]:
     """Icône de l'application (.ico) : anneau orange Claude sur fond sombre."""
     out = []

@@ -7,6 +7,7 @@ dans une file que la boucle Tk consomme toutes les 100 ms.
 from __future__ import annotations
 
 import queue
+import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -16,8 +17,11 @@ import customtkinter as ctk
 import pystray
 
 from . import APP_NAME, __version__, autostart, login, render, updater
-from .config import Config
-from .formatting import reset_clock, tooltip
+from .config import Config, config_dir
+from .costs import CostSummary, CostTracker
+from .forecast import SESSION_LOOKBACK_S, WEEKLY_LOOKBACK_S, Forecast, forecast
+from .formatting import forecast_text, reset_clock, tooltip
+from .history import History
 from .popup import UsagePopup
 from .usage_client import (
     CredentialsNotFound,
@@ -35,6 +39,13 @@ def _same_window(a: datetime | None, b: datetime | None) -> bool:
     if a is None or b is None:
         return a is b
     return abs((a - b).total_seconds()) < 600
+
+
+def _open_history() -> History:
+    try:
+        return History(config_dir() / "history.db")
+    except (sqlite3.Error, OSError):
+        return History(":memory:")  # fichier inaccessible : historique limité à cette session
 
 
 def _age_s(snapshot: UsageSnapshot) -> float:
@@ -64,11 +75,15 @@ RATE_LIMIT_MAX_S = 1800
 STALE_AFTER_S = 1800
 # Clics trop rapprochés sur « Rafraîchir » : ignorés pour ne pas déclencher de 429.
 MIN_MANUAL_INTERVAL_S = 30
+COST_SCAN_INTERVAL_S = 600
+# Notification « à ce rythme » : seulement si la limite est proche.
+FORECAST_ALERT_S = {"five_hour": 45 * 60, "seven_day": 24 * 3600}
+DAY_LABELS = ("lu", "ma", "me", "je", "ve", "sa", "di")
 RECHARGE_MIN_PCT = 50  # « session rechargée » seulement si on l'avait bien entamée
 
 
 class TrayApp:
-    def __init__(self, config: Config, fetcher: Fetcher | None = None) -> None:
+    def __init__(self, config: Config, fetcher: Fetcher | None = None, history: History | None = None) -> None:
         self.config = config
         self.fetcher = fetcher or UsageClient(auto_refresh_token=config.auto_refresh_token)
         self.snapshot: UsageSnapshot | None = None
@@ -98,7 +113,18 @@ class TrayApp:
         self.root = ctk.CTk()
         self.root.withdraw()
         self.root.title(APP_NAME)
-        self.popup = UsagePopup(self.root, on_refresh=self.request_refresh, on_login=self.open_login)
+        self.history = history or _open_history()
+        self.costs = CostTracker(self.history)
+        self.cost_summary: CostSummary | None = None
+        self.forecasts: dict[str, Forecast | None] = {}
+        self._forecast_notified: dict[str, datetime | None] = {}
+        self.popup = UsagePopup(
+            self.root,
+            on_refresh=self.request_refresh,
+            on_login=self.open_login,
+            on_details=self._set_details_open,
+            details_open=config.details_open,
+        )
 
         self.icon = pystray.Icon(
             "claude_usage", icon=render.tray_icon(None), title=tooltip(None), menu=self._build_menu()
@@ -171,6 +197,7 @@ class TrayApp:
             flag_item("Pour la session 5h", "notify_session"),
             flag_item("Pour la semaine", "notify_weekly"),
             flag_item("Quand la session est rechargée", "notify_recharge"),
+            flag_item("Si la limite approche à ce rythme", "notify_forecast"),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Tester une notification", self._test_notification),
         )
@@ -344,9 +371,15 @@ class TrayApp:
     # ------------------------------------------------------------- état
     def _on_snapshot(self, snapshot: UsageSnapshot) -> None:
         self.snapshot, self.error, self.auth_error, self.notice = snapshot, None, False, None
+        try:
+            self.history.record(snapshot)
+        except sqlite3.Error:
+            pass  # l'historique est un bonus : ne jamais bloquer l'affichage
         self.icon.update_menu()
+        self._update_forecasts()
         self._apply_state()
         self._maybe_notify(snapshot)
+        self._maybe_notify_forecast(snapshot)
 
     def _on_rate_limited(self) -> None:
         retry_at = datetime.now() + timedelta(seconds=self.next_delay())
@@ -381,6 +414,71 @@ class TrayApp:
         self.icon.icon = render.tray_icon(self._icon_value(), offline=offline)
         self.icon.title = tooltip(self.snapshot, self.error)
         self.popup.update_state(self.snapshot, self.error, show_login=self.auth_error, notice=self.notice)
+        self.popup.update_extras(
+            {k: forecast_text(fc) for k, fc in self.forecasts.items()},
+            self._details_data(),
+        )
+
+    # ------------------------------------------------ prévision et historique
+    def _update_forecasts(self) -> None:
+        self.forecasts = {}
+        if not self.snapshot:
+            return
+        lookbacks = {"five_hour": SESSION_LOOKBACK_S, "seven_day": WEEKLY_LOOKBACK_S}
+        for key, lookback in lookbacks.items():
+            window = self.snapshot.windows.get(key)
+            if window is None:
+                continue
+            try:
+                samples = self.history.window_samples(key, window.resets_at)
+            except sqlite3.Error:
+                continue
+            self.forecasts[key] = forecast(samples, lookback, window.resets_at)
+
+    def _details_data(self) -> tuple | None:
+        now = time.time()
+        try:
+            series = self.history.series("five_hour", now - 86400)
+            days = self.history.daily_increase("seven_day", 7)
+        except sqlite3.Error:
+            return None
+        bars = [(DAY_LABELS[d.weekday()], v) for d, v in days]
+        return (series, now - 86400, now, bars, self.cost_summary)
+
+    def _set_details_open(self, is_open: bool) -> None:
+        self.config.details_open = is_open
+        self.config.save()
+
+    def _maybe_notify_forecast(self, snapshot: UsageSnapshot) -> None:
+        """« À ce rythme, limite vers 15:40 » : une fois par fenêtre, si c'est proche."""
+        if not (self.config.notifications_enabled and self.config.notify_forecast):
+            return
+        now = datetime.now(timezone.utc)
+        for key, fc in self.forecasts.items():
+            window = snapshot.windows.get(key)
+            if not window or not fc or fc.kind != "eta":
+                continue
+            if (fc.at - now).total_seconds() > FORECAST_ALERT_S[key]:
+                continue
+            if key in self._forecast_notified and _same_window(self._forecast_notified[key], window.resets_at):
+                continue
+            self._forecast_notified[key] = window.resets_at
+            self.icon.notify(f"À ce rythme, limite {window.label} : {forecast_text(fc)}", APP_NAME)
+
+    def _cost_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self.costs.scan()
+                summary = self.costs.summary()
+            except (OSError, sqlite3.Error):
+                summary = None
+            if summary is not None:
+                self._ui(lambda s=summary: self._on_costs(s))
+            self._stop.wait(COST_SCAN_INTERVAL_S)
+
+    def _on_costs(self, summary: CostSummary) -> None:
+        self.cost_summary = summary
+        self._apply_state()
 
     def _maybe_notify(self, snapshot: UsageSnapshot) -> None:
         """Notifie quand un palier est franchi entre deux relevés (et au rechargement).
@@ -415,6 +513,7 @@ class TrayApp:
     def run(self) -> None:
         self.icon.run_detached()
         threading.Thread(target=self._poll_loop, name="usage-poll", daemon=True).start()
+        threading.Thread(target=self._cost_loop, name="cost-scan", daemon=True).start()
         if self.config.check_updates and updater.updates_supported():
             threading.Thread(target=self._update_loop, name="update-check", daemon=True).start()
         self.root.after(100, self._drain_ui_queue)
