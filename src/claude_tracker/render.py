@@ -13,17 +13,34 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-# Palette
-BG = "#1C1C1E"
-CARD = "#2A2A2D"
-TEXT = "#F2F2F2"
-TEXT_MUTED = "#9A9A9F"
-ACCENT = "#D97757"  # orange Claude
-TRACK = "#3A3A3E"
-GREEN = "#4ADE80"
-ORANGE = "#F59E0B"
-RED = "#EF4444"
-GREY = "#8E8E93"
+# Palettes. Les modules lisent render.BG, render.TEXT… : set_theme() les remplace.
+PALETTES = {
+    "dark": {
+        "BG": "#1C1C1E", "CARD": "#2A2A2D", "TEXT": "#F2F2F2", "TEXT_MUTED": "#9A9A9F",
+        "ACCENT": "#D97757", "TRACK": "#3A3A3E", "GREEN": "#4ADE80", "ORANGE": "#F59E0B",
+        "RED": "#EF4444", "GREY": "#8E8E93",
+    },
+    "light": {
+        "BG": "#F5F5F7", "CARD": "#FFFFFF", "TEXT": "#1C1C1E", "TEXT_MUTED": "#6E6E73",
+        "ACCENT": "#C96442", "TRACK": "#E3E3E8", "GREEN": "#16A34A", "ORANGE": "#D97706",
+        "RED": "#DC2626", "GREY": "#8E8E93",
+    },
+}
+# Icône du tray : lisible sur une barre des tâches sombre ou claire (réglage Windows distinct).
+TRAY_INK = {"dark": ("#F2F2F2", "#3A3A3E"), "light": ("#1C1C1E", "#C8C8CD")}
+
+BG = CARD = TEXT = TEXT_MUTED = ACCENT = TRACK = GREEN = ORANGE = RED = GREY = ""
+current_theme = ""
+
+
+def set_theme(name: str) -> None:
+    """Applique la palette "dark" ou "light" à tout le module."""
+    global current_theme
+    current_theme = name if name in PALETTES else "dark"
+    globals().update(PALETTES[current_theme])
+
+
+set_theme("dark")
 
 SUPERSAMPLE = 4
 
@@ -96,19 +113,20 @@ def _pct_text(pct: float | None) -> str:
     return f"{round(pct):d}"
 
 
-def tray_icon(pct: float | None, size: int = 64, offline: bool = False) -> Image.Image:
+def tray_icon(pct: float | None, size: int = 64, offline: bool = False, light_taskbar: bool = False) -> Image.Image:
     """Icône de la zone de notification : anneau épais + chiffre au centre."""
     s = size * SUPERSAMPLE
     img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     thickness = int(s * 0.14)
+    ink, track = TRAY_INK["light" if light_taskbar else "dark"]
     ring_color = GREY if offline else color_for(pct)
-    _draw_ring(d, s, pct, ring_color, thickness, TRACK)
+    _draw_ring(d, s, pct, ring_color, thickness, track)
 
     text = _pct_text(pct)
     inner = s - 2 * thickness
     f = _fit_font(d, text, inner * 0.84, inner * 0.56)
-    d.text((s / 2, s / 2), text, font=f, fill=TEXT, anchor="mm")
+    d.text((s / 2, s / 2), text, font=f, fill=ink, anchor="mm")
     return img.resize((size, size), Image.LANCZOS)
 
 
@@ -134,8 +152,13 @@ def gauge(pct: float | None, size: int = 240, offline: bool = False) -> Image.Im
     return img.resize((size, size), Image.LANCZOS)
 
 
+def _empty_text(d: ImageDraw.ImageDraw, w: float, h: float, text: str, k: float) -> None:
+    d.text((w / 2, h / 2), text, font=font(int(11 * k), bold=False), fill=_hex_to_rgba(TEXT_MUTED), anchor="mm")
+
+
 def sparkline(
-    points: list[tuple[float, float]], start: float, end: float, width: int = 300, height: int = 64
+    points: list[tuple[float, float]], start: float, end: float, width: int = 300, height: int = 64,
+    empty_text: str = "Le graphique se remplit au fil des relevés",
 ) -> Image.Image:
     """Courbe d'utilisation (0-100 %) entre deux horodatages, fond transparent."""
     k = SUPERSAMPLE * height / 64  # tailles relatives : l'image peut être rendue en x2 (écrans HiDPI)
@@ -157,10 +180,15 @@ def sparkline(
         x, y = xy[-1]
         r = 3 * k
         d.ellipse((x - r, y - r, x + r, y + r), fill=_hex_to_rgba(color))
+    elif empty_text:
+        _empty_text(d, w, (top + bottom) / 2 * 2, empty_text, k)
     return img.resize((width, height), Image.LANCZOS)
 
 
-def day_bars(values: list[tuple[str, float]], width: int = 300, height: int = 78) -> Image.Image:
+def day_bars(
+    values: list[tuple[str, float]], width: int = 300, height: int = 78,
+    empty_text: str = "Les barres se remplissent jour après jour",
+) -> Image.Image:
     """Barres verticales (une par jour) avec le libellé du jour et la valeur en %."""
     k = SUPERSAMPLE * height / 78  # tailles relatives : l'image peut être rendue en x2 (écrans HiDPI)
     w, h = width * SUPERSAMPLE, height * SUPERSAMPLE
@@ -174,6 +202,8 @@ def day_bars(values: list[tuple[str, float]], width: int = 300, height: int = 78
     slot = w / n
     bar_w = slot * 0.55
     peak = max([v for _, v in values] + [10.0])
+    if empty_text and not any(v >= 0.5 for _, v in values):
+        _empty_text(d, w, top + bottom, empty_text, k)
     for i, (label, value) in enumerate(values):
         cx = slot * i + slot / 2
         today = i == n - 1

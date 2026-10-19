@@ -89,12 +89,13 @@ class DetailsPanel(ctk.CTkFrame):
         ctk.CTkLabel(self, text="Semaine · consommation par jour (%)", anchor="w", **muted).pack(fill="x", padx=14)
         self.bars = ctk.CTkLabel(self, text="")
         self.bars.pack(padx=14, pady=(2, 8))
+        ctk.CTkLabel(self, text="Coût équivalent API (Claude Code)", anchor="w", **muted).pack(fill="x", padx=14)
         self.cost = ctk.CTkLabel(
             self, text="", text_color=render.TEXT, font=ctk.CTkFont(size=12, weight="bold"), justify="left", anchor="w"
         )
         self.cost.pack(fill="x", padx=14)
         ctk.CTkLabel(
-            self, text="Coût équivalent API : usage Claude Code uniquement, tarifs publics.",
+            self, text="Au tarif public de l'API. claude.ai et Claude Desktop ne sont pas comptés.",
             anchor="w", wraplength=self.WIDTH - 10, justify="left", text_color=render.TEXT_MUTED,
             font=ctk.CTkFont(size=10),
         ).pack(fill="x", padx=14, pady=(0, 10))

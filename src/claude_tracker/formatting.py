@@ -97,9 +97,9 @@ def money(value: float) -> str:
 
 def cost_text(summary) -> str:
     if summary is None:
-        return "Coût équivalent API : calcul en cours…"
+        return "Calcul en cours…"
     if summary.messages == 0:
-        return "Coût équivalent API : aucun usage de Claude Code ce mois-ci"
+        return "Aucun usage de Claude Code ce mois-ci"
     text = f"Aujourd'hui : {money(summary.today)}   ·   Ce mois : {money(summary.month)}"
     if summary.unknown_tokens:
         text += f"\n(+ {summary.unknown_tokens:,} tokens d'un modèle sans tarif connu)".replace(",", " ")

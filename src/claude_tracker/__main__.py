@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -90,9 +91,16 @@ def main() -> None:
         config.poll_seconds = 60
         from .history import History
 
-        TrayApp(config, fetcher=DemoFetcher(), history=History(":memory:")).run()
+        app = TrayApp(config, fetcher=DemoFetcher(), history=History(":memory:"))
     else:
-        TrayApp(config).run()
+        app = TrayApp(config)
+    app.run()
+    # La boucle est terminée : on ferme la base puis on quitte franchement, même si un
+    # thread de pystray traîne (sinon l'installeur d'une mise à jour trouverait l'appli ouverte).
+    try:
+        app.history.close()
+    finally:
+        os._exit(0)
 
 
 if __name__ == "__main__":
